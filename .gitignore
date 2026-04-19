@@ -1,0 +1,23 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# VS Code settings
+.vscode/
+
+# Local data / Temp files
+*.log
+.DS_Store
+
+# Large model files (Optional)
+# If your .joblib is over 100MB, you should use Git LFS or 
+# host it on Google Drive, but for now, we will leave it out 
+# so it uploads to your repo.

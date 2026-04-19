@@ -1,0 +1,11 @@
+{
+  "district_name": "Akatsi East",
+  "director_username": "Saviour Amegayie",
+  "headteacher_security_key": "AKATSIEAST-4693",
+  "smtp_host": "",
+  "smtp_port": "587",
+  "smtp_username": "",
+  "smtp_password": "",
+  "smtp_sender_email": "",
+  "smtp_use_tls": "true"
+}

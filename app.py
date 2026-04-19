@@ -1,0 +1,4420 @@
+import csv
+import hashlib
+import hmac
+import io
+import json
+import os
+import random
+import re
+import smtplib
+import textwrap
+import urllib.parse
+import zipfile
+from datetime import datetime
+from email.message import EmailMessage
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+import joblib
+from matplotlib.backends.backend_pdf import PdfPages
+
+
+# ============================================================
+# 1. APP IDENTITY, FILE PATHS, AND SHARED SCHEMA DEFINITIONS
+# ============================================================
+APP_TITLE = "EduPulse: The Basic Education Transition Analyzer"
+DATA_FILE = "akatsi_district_data.csv"
+USERS_FILE = "users.csv"
+CIRCUITS_FILE = "circuits.csv"
+APP_CONFIG_FILE = "app_config.json"
+NOTIFICATIONS_FILE = "notifications.csv"
+SCENARIOS_FILE = "saved_scenarios.csv"
+CONTACTS_FILE = "contact_directory.csv"
+MODEL_FILE = "bece_models.joblib"
+CALIBRATION_FILE = "school_calibration.json"
+BRAND_IMAGE = r"C:\Users\SAVIOUR\Downloads\app_logo.png"
+FINAL_SUFFIX = "_Final_BECE"
+PLACEMENT_ORDER = ["Category A", "Category B", "Category C", "Category D/SP"]
+USERS_COLUMNS = ["username", "password", "role", "school", "district", "security_key"]
+EXPECTED_CIRCUIT_COLUMNS = ["School_Name", "Circuit"]
+NOTIFICATION_COLUMNS = [
+    "notification_id",
+    "created_at",
+    "district",
+    "target_role",
+    "event_type",
+    "created_by",
+    "school",
+    "circuit",
+    "student_id",
+    "student_name",
+    "message",
+    "status",
+]
+BLOOMCORE_FOOTER_TEXT = "Powered by BloomCore Technologies"
+HEADTEACHER_TEMPLATE_ROWS = 250
+SMTP_CONFIG_FIELDS = [
+    "smtp_host",
+    "smtp_port",
+    "smtp_username",
+    "smtp_password",
+    "smtp_sender_email",
+    "smtp_use_tls",
+]
+SCENARIO_COLUMNS = [
+    "scenario_id",
+    "created_at",
+    "district",
+    "school",
+    "circuit",
+    "student_id",
+    "student_name",
+    "scenario_name",
+    "intervention_note",
+    "current_attendance",
+    "target_attendance",
+    "current_assignment",
+    "target_assignment",
+    "current_mock",
+    "target_mock",
+    "current_aggregate",
+    "predicted_aggregate",
+    "current_placement",
+    "predicted_placement",
+    "current_best_six_raw_total",
+    "predicted_best_six_raw_total",
+    "current_raw_average",
+    "predicted_raw_average",
+    "best_two_electives",
+    "prediction_payload_json",
+]
+CONTACT_COLUMNS = [
+    "district",
+    "school",
+    "contact_name",
+    "role",
+    "email",
+    "phone",
+    "whatsapp_number",
+    "preferred_channel",
+    "updated_at",
+]
+SUBJECT_IMPORT_ALIASES = {
+    "Student_ID": ["student id", "student_id", "index number", "index_number", "candidate number", "candidate_no", "candidate id"],
+    "Student_Name": ["student name", "student_name", "candidate name", "candidate_name", "full name", "name"],
+    "Gender": ["gender", "sex"],
+    "School_Name": ["school name", "school_name", "school"],
+    "Circuit": ["circuit"],
+    "Attendance_Percent": ["attendance percent", "attendance_percent", "attendance", "attendance percentage"],
+    "Mathematics_Final_BECE": ["mathematics", "math", "maths", "mathematics final bece", "mathematics score", "math score"],
+    "English_Language_Final_BECE": ["english language", "english", "english language final bece", "english score"],
+    "Integrated_Science_Final_BECE": ["integrated science", "science", "science score", "integrated science final bece"],
+    "Social_Studies_Final_BECE": ["social studies", "social", "social studies score", "social studies final bece"],
+    "ICT_Final_BECE": ["ict", "information and communication technology", "ict score"],
+    "RME_Final_BECE": ["rme", "religious and moral education", "rme score"],
+    "BDT_Final_BECE": ["bdt", "basic design and technology", "bdt score"],
+    "French_Final_BECE": ["french", "french score"],
+    "Ewe_Final_BECE": ["ewe", "ewe score"],
+}
+EXPECTED_DATA_COLUMNS = [
+    "Student_ID",
+    "Student_Name",
+    "Gender",
+    "School_Name",
+    "Circuit",
+    "Attendance_Percent",
+    "Mathematics_Assignments",
+    "Mathematics_Term1_Exam",
+    "Mathematics_Term2_Exam",
+    "Mathematics_Mock1",
+    "Mathematics_Mock2",
+    "Mathematics_Final_BECE",
+    "English_Language_Assignments",
+    "English_Language_Term1_Exam",
+    "English_Language_Term2_Exam",
+    "English_Language_Mock1",
+    "English_Language_Mock2",
+    "English_Language_Final_BECE",
+    "Integrated_Science_Assignments",
+    "Integrated_Science_Term1_Exam",
+    "Integrated_Science_Term2_Exam",
+    "Integrated_Science_Mock1",
+    "Integrated_Science_Mock2",
+    "Integrated_Science_Final_BECE",
+    "Social_Studies_Assignments",
+    "Social_Studies_Term1_Exam",
+    "Social_Studies_Term2_Exam",
+    "Social_Studies_Mock1",
+    "Social_Studies_Mock2",
+    "Social_Studies_Final_BECE",
+    "ICT_Assignments",
+    "ICT_Term1_Exam",
+    "ICT_Term2_Exam",
+    "ICT_Mock1",
+    "ICT_Mock2",
+    "ICT_Final_BECE",
+    "RME_Assignments",
+    "RME_Term1_Exam",
+    "RME_Term2_Exam",
+    "RME_Mock1",
+    "RME_Mock2",
+    "RME_Final_BECE",
+    "BDT_Assignments",
+    "BDT_Term1_Exam",
+    "BDT_Term2_Exam",
+    "BDT_Mock1",
+    "BDT_Mock2",
+    "BDT_Final_BECE",
+    "French_Assignments",
+    "French_Term1_Exam",
+    "French_Term2_Exam",
+    "French_Mock1",
+    "French_Mock2",
+    "French_Final_BECE",
+    "Ewe_Assignments",
+    "Ewe_Term1_Exam",
+    "Ewe_Term2_Exam",
+    "Ewe_Mock1",
+    "Ewe_Mock2",
+    "Ewe_Final_BECE",
+    "Math_Improvement",
+    "Math_Consistency",
+    "Action_Zone",
+]
+CORE_FINAL_SUBJECTS = [
+    "Mathematics_Final_BECE",
+    "English_Language_Final_BECE",
+    "Integrated_Science_Final_BECE",
+    "Social_Studies_Final_BECE",
+]
+ASSESSMENT_SUFFIXES = ["Assignments", "Term1_Exam", "Term2_Exam", "Mock1", "Mock2"]
+MASTER_CREDENTIALS = {
+    "director_akatsi": {
+        "password": "admin123",
+        "role": "Director",
+        "school": "ALL",
+        "district": "Akatsi South Municipal",
+        "security_key": "AKATSISOUTH-0000",
+    }
+}
+
+
+# ============================================================
+# 2. STREAMLIT PAGE CONFIGURATION, STYLING, AND SESSION STATE
+# ============================================================
+st.set_page_config(page_title=APP_TITLE, page_icon="📊", layout="wide")
+
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebarUserContent"] > div:first-child {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+    }
+    [data-testid="stSidebarUserContent"] > div:first-child > div:last-child {
+        margin-top: auto;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 32px;
+        color: #1E3A8A;
+        font-weight: bold;
+    }
+    .metric-card {
+        background-color: #F8FAFC;
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 5px solid #1E3A8A;
+        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.05);
+        margin-bottom: 10px;
+    }
+    .sidebar-brand-card {
+        background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+        border: 1px solid #bfdbfe;
+        border-radius: 14px;
+        padding: 0.9rem 1rem;
+        margin: 0.2rem 0 0.8rem 0;
+    }
+    .sidebar-kicker {
+        color: #1d4ed8;
+        font-size: 0.78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+    .sidebar-title {
+        color: #0f172a;
+        font-size: 1.15rem;
+        font-weight: 800;
+        margin-top: 0.15rem;
+    }
+    .sidebar-subtitle {
+        color: #475569;
+        font-size: 0.92rem;
+        margin-top: 0.2rem;
+    }
+    .scroll-top-link {
+        margin-top: 0.8rem;
+        text-align: right;
+    }
+    .scroll-top-link a {
+        display: inline-block;
+        padding: 0.42rem 0.8rem;
+        border-radius: 999px;
+        background: #e2e8f0;
+        color: #0f172a;
+        font-size: 0.88rem;
+        font-weight: 600;
+        text-decoration: none;
+    }
+    .scroll-top-link a:hover {
+        background: #cbd5e1;
+    }
+    .sidebar-footer-text {
+        text-align: center;
+        color: #475569;
+        font-size: 0.9rem;
+        font-weight: 600;
+        padding-top: 0.25rem;
+    }
+    .mobile-sync-card {
+        background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
+        border: 1px solid #cbd5e1;
+        border-radius: 14px;
+        padding: 0.9rem 1rem;
+        margin-bottom: 1rem;
+    }
+    .mobile-sync-title {
+        color: #0f172a;
+        font-size: 1rem;
+        font-weight: 800;
+        margin-bottom: 0.35rem;
+    }
+    .mobile-sync-copy {
+        color: #334155;
+        font-size: 0.92rem;
+        margin-bottom: 0;
+    }
+    @media (max-width: 768px) {
+        .metric-card {
+            padding: 12px;
+        }
+        .scroll-top-link {
+            text-align: center;
+        }
+        .stButton > button,
+        .stDownloadButton > button {
+            width: 100%;
+            min-height: 3rem;
+            font-size: 1rem;
+        }
+        .mobile-sync-card {
+            padding: 1rem;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def init_session_state():
+    defaults = {
+        "logged_in": False,
+        "current_user": "",
+        "user_role": "",
+        "user_school": "",
+        "user_district": "",
+        "latest_director_key": "",
+        "latest_registered_school": "",
+        "latest_registered_district": "",
+        "auth_nav": "Login",
+        "auth_flash_message": "",
+        "auth_flash_severity": "success",
+        "portal_flash_message": "",
+        "portal_flash_severity": "success",
+        "pending_setup_role": "",
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+# ============================================================
+# 3. SECURITY, ACCOUNT MANAGEMENT, AND APP CONFIGURATION
+# ============================================================
+def hash_password(password):
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 200_000)
+    return f"pbkdf2_sha256${salt.hex()}${digest.hex()}"
+
+
+def verify_password(plain_password, stored_password):
+    if isinstance(stored_password, str) and stored_password.startswith("pbkdf2_sha256$"):
+        try:
+            _, salt_hex, digest_hex = stored_password.split("$", 2)
+            computed = hashlib.pbkdf2_hmac(
+                "sha256",
+                plain_password.encode("utf-8"),
+                bytes.fromhex(salt_hex),
+                200_000,
+            ).hex()
+            return hmac.compare_digest(computed, digest_hex)
+        except ValueError:
+            return False
+    return stored_password == plain_password
+
+
+def load_app_config():
+    default_config = {
+        "district_name": "",
+        "director_username": "",
+        "headteacher_security_key": "",
+        "smtp_host": "",
+        "smtp_port": "587",
+        "smtp_username": "",
+        "smtp_password": "",
+        "smtp_sender_email": "",
+        "smtp_use_tls": "true",
+    }
+
+    if not os.path.isfile(APP_CONFIG_FILE):
+        return default_config
+
+    try:
+        with open(APP_CONFIG_FILE, "r", encoding="utf-8") as handle:
+            saved_config = json.load(handle)
+    except Exception:
+        return default_config
+
+    if not isinstance(saved_config, dict):
+        return default_config
+
+    merged_config = default_config.copy()
+    merged_config.update({key: str(value).strip() for key, value in saved_config.items() if key in default_config})
+    return merged_config
+
+
+def save_app_config(config):
+    safe_config = {
+        "district_name": str(config.get("district_name", "")).strip(),
+        "director_username": str(config.get("director_username", "")).strip(),
+        "headteacher_security_key": str(config.get("headteacher_security_key", "")).strip(),
+        "smtp_host": str(config.get("smtp_host", "")).strip(),
+        "smtp_port": str(config.get("smtp_port", "587")).strip() or "587",
+        "smtp_username": str(config.get("smtp_username", "")).strip(),
+        "smtp_password": str(config.get("smtp_password", "")).strip(),
+        "smtp_sender_email": str(config.get("smtp_sender_email", "")).strip(),
+        "smtp_use_tls": str(config.get("smtp_use_tls", "true")).strip().lower() or "true",
+    }
+    with open(APP_CONFIG_FILE, "w", encoding="utf-8") as handle:
+        json.dump(safe_config, handle, indent=2)
+
+
+def get_scope_label():
+    config = load_app_config()
+    return config["district_name"] or "District/Municipal"
+
+
+def slugify_name(value):
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "", str(value).upper())
+    return cleaned[:12] or "DIRECTOR"
+
+
+def generate_security_key(district_name):
+    return f"{slugify_name(district_name)}-{random.randint(1000, 9999)}"
+
+
+def activate_director_context(username, district_name, security_key):
+    save_app_config(
+        {
+            "district_name": district_name,
+            "director_username": username,
+            "headteacher_security_key": security_key,
+        }
+    )
+
+
+def load_users_df():
+    if not os.path.isfile(USERS_FILE):
+        return pd.DataFrame(columns=USERS_COLUMNS)
+
+    try:
+        users_df = pd.read_csv(USERS_FILE, dtype=str).fillna("")
+    except Exception:
+        return pd.DataFrame(columns=USERS_COLUMNS)
+
+    for column in USERS_COLUMNS:
+        if column not in users_df.columns:
+            users_df[column] = ""
+
+    users_df = users_df[USERS_COLUMNS].copy()
+    for column in USERS_COLUMNS:
+        users_df[column] = users_df[column].astype(str).str.strip()
+    users_df = users_df[users_df["username"] != ""]
+    return users_df
+
+
+def save_users_df(users_df):
+    normalized_df = users_df.copy()
+    for column in USERS_COLUMNS:
+        if column not in normalized_df.columns:
+            normalized_df[column] = ""
+    normalized_df = normalized_df[USERS_COLUMNS].fillna("")
+    normalized_df.to_csv(USERS_FILE, index=False)
+
+
+def load_users():
+    users_df = load_users_df()
+    return users_df.set_index("username").to_dict("index")
+
+
+# ============================================================
+# 4. NOTIFICATIONS, SAVED SCENARIOS, AND CONTACT DIRECTORY
+# ============================================================
+def load_notifications_df():
+    if not os.path.isfile(NOTIFICATIONS_FILE):
+        return pd.DataFrame(columns=NOTIFICATION_COLUMNS)
+
+    try:
+        notifications_df = pd.read_csv(NOTIFICATIONS_FILE, dtype=str).fillna("")
+    except Exception:
+        return pd.DataFrame(columns=NOTIFICATION_COLUMNS)
+
+    for column in NOTIFICATION_COLUMNS:
+        if column not in notifications_df.columns:
+            notifications_df[column] = ""
+
+    notifications_df = notifications_df[NOTIFICATION_COLUMNS].copy()
+    for column in NOTIFICATION_COLUMNS:
+        notifications_df[column] = notifications_df[column].astype(str).str.strip()
+    return notifications_df
+
+
+def save_notifications_df(notifications_df):
+    safe_df = notifications_df.copy()
+    for column in NOTIFICATION_COLUMNS:
+        if column not in safe_df.columns:
+            safe_df[column] = ""
+    safe_df = safe_df[NOTIFICATION_COLUMNS].fillna("")
+    safe_df.to_csv(NOTIFICATIONS_FILE, index=False)
+
+
+def load_scenarios_df():
+    if not os.path.isfile(SCENARIOS_FILE):
+        return pd.DataFrame(columns=SCENARIO_COLUMNS)
+
+    try:
+        scenarios_df = pd.read_csv(SCENARIOS_FILE, dtype=str).fillna("")
+    except Exception:
+        return pd.DataFrame(columns=SCENARIO_COLUMNS)
+
+    for column in SCENARIO_COLUMNS:
+        if column not in scenarios_df.columns:
+            scenarios_df[column] = ""
+    scenarios_df = scenarios_df[SCENARIO_COLUMNS].copy()
+    for column in SCENARIO_COLUMNS:
+        scenarios_df[column] = scenarios_df[column].astype(str).str.strip()
+    return scenarios_df
+
+
+def save_scenarios_df(scenarios_df):
+    safe_df = scenarios_df.copy()
+    for column in SCENARIO_COLUMNS:
+        if column not in safe_df.columns:
+            safe_df[column] = ""
+    safe_df = safe_df[SCENARIO_COLUMNS].fillna("")
+    safe_df.to_csv(SCENARIOS_FILE, index=False)
+
+
+def load_contacts_df():
+    if not os.path.isfile(CONTACTS_FILE):
+        return pd.DataFrame(columns=CONTACT_COLUMNS)
+
+    try:
+        contacts_df = pd.read_csv(CONTACTS_FILE, dtype=str).fillna("")
+    except Exception:
+        return pd.DataFrame(columns=CONTACT_COLUMNS)
+
+    for column in CONTACT_COLUMNS:
+        if column not in contacts_df.columns:
+            contacts_df[column] = ""
+    contacts_df = contacts_df[CONTACT_COLUMNS].copy()
+    for column in CONTACT_COLUMNS:
+        contacts_df[column] = contacts_df[column].astype(str).str.strip()
+    return contacts_df
+
+
+def save_contacts_df(contacts_df):
+    safe_df = contacts_df.copy()
+    for column in CONTACT_COLUMNS:
+        if column not in safe_df.columns:
+            safe_df[column] = ""
+    safe_df = safe_df[CONTACT_COLUMNS].fillna("")
+    safe_df.to_csv(CONTACTS_FILE, index=False)
+
+
+def upsert_contact(contact_row):
+    contacts_df = load_contacts_df()
+    district = str(contact_row.get("district", "")).strip()
+    school = str(contact_row.get("school", "")).strip()
+    mask = (
+        contacts_df["district"].fillna("").astype(str).str.strip().eq(district)
+        & contacts_df["school"].fillna("").astype(str).str.strip().eq(school)
+    )
+    updated_row = pd.DataFrame([contact_row], columns=CONTACT_COLUMNS)
+    contacts_df = contacts_df.loc[~mask].copy()
+    contacts_df = pd.concat([contacts_df, updated_row], ignore_index=True)
+    save_contacts_df(contacts_df)
+
+
+def smtp_config_is_ready(config):
+    return bool(str(config.get("smtp_host", "")).strip() and str(config.get("smtp_sender_email", "")).strip())
+
+
+def create_notification(
+    event_type,
+    message,
+    target_role="Director",
+    school="",
+    circuit="",
+    student_id="",
+    student_name="",
+    created_by="",
+    district="",
+):
+    notifications_df = load_notifications_df()
+    notification_row = pd.DataFrame(
+        [
+            {
+                "notification_id": f"notif-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{random.randint(1000, 9999)}",
+                "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "district": district or get_scope_label(),
+                "target_role": target_role,
+                "event_type": event_type,
+                "created_by": created_by,
+                "school": school,
+                "circuit": circuit,
+                "student_id": student_id,
+                "student_name": student_name,
+                "message": message,
+                "status": "Unread",
+            }
+        ]
+    )
+    notifications_df = pd.concat([notifications_df, notification_row], ignore_index=True)
+    save_notifications_df(notifications_df)
+
+
+def get_notifications(target_role="Director", district="", unread_only=False):
+    notifications_df = load_notifications_df()
+    if notifications_df.empty:
+        return notifications_df
+
+    filtered_df = notifications_df[
+        notifications_df["target_role"].fillna("").astype(str).str.strip() == str(target_role).strip()
+    ].copy()
+
+    if district:
+        filtered_df = filtered_df[
+            filtered_df["district"].fillna("").astype(str).str.strip() == str(district).strip()
+        ].copy()
+
+    if unread_only:
+        filtered_df = filtered_df[
+            filtered_df["status"].fillna("").astype(str).str.strip().eq("Unread")
+        ].copy()
+
+    return filtered_df.sort_values("created_at", ascending=False).reset_index(drop=True)
+
+
+def mark_notifications_as_read(target_role="Director", district=""):
+    notifications_df = load_notifications_df()
+    if notifications_df.empty:
+        return
+
+    mask = notifications_df["target_role"].fillna("").astype(str).str.strip().eq(str(target_role).strip())
+    if district:
+        mask = mask & notifications_df["district"].fillna("").astype(str).str.strip().eq(str(district).strip())
+    notifications_df.loc[mask, "status"] = "Read"
+    save_notifications_df(notifications_df)
+
+
+def initialize_empty_student_dataset():
+    pd.DataFrame(columns=EXPECTED_DATA_COLUMNS).to_csv(DATA_FILE, index=False)
+
+
+def initialize_empty_circuit_dataset():
+    pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS).to_csv(CIRCUITS_FILE, index=False)
+
+
+def register_user(username, password, role, school, district="", security_key=""):
+    username = username.strip()
+    school = school.strip()
+    district = district.strip()
+    security_key = security_key.strip()
+
+    if not username:
+        raise ValueError("Username is required.")
+    if not password:
+        raise ValueError("Password is required.")
+    if len(password) < 6:
+        raise ValueError("Password must be at least 6 characters.")
+    if role == "Director":
+        school = "ALL"
+        if not district:
+            raise ValueError("District/Municipal name is required for Director registration.")
+        if not security_key:
+            security_key = generate_security_key(district)
+    elif not school:
+        raise ValueError("Please choose a school.")
+
+    users_df = load_users_df()
+    existing_users = {**MASTER_CREDENTIALS, **load_users()}
+    if username in existing_users:
+        raise ValueError("That username already exists.")
+
+    users_df = pd.concat(
+        [
+            users_df,
+            pd.DataFrame(
+                [
+                    {
+                        "username": username,
+                        "password": hash_password(password),
+                        "role": role,
+                        "school": school,
+                        "district": district,
+                        "security_key": security_key,
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    save_users_df(users_df)
+    return {"username": username, "district": district, "security_key": security_key, "school": school}
+
+
+# ============================================================
+# 5. CIRCUIT MAPPING, CSV TEMPLATES, AND DATASET VALIDATION
+# ============================================================
+def load_circuit_lookup():
+    if not os.path.isfile(CIRCUITS_FILE):
+        return {}
+
+    try:
+        mapping_df = pd.read_csv(CIRCUITS_FILE, dtype=str).fillna("")
+    except Exception:
+        return {}
+
+    mapping_df.columns = [str(column).replace("\ufeff", "").strip() for column in mapping_df.columns]
+    columns_valid, _ = validate_circuit_columns(mapping_df.columns.tolist())
+    if not columns_valid:
+        return {}
+
+    mapping_df = clean_uploaded_dataframe(mapping_df)
+    mapping_df["School_Name"] = mapping_df["School_Name"].astype(str).str.strip()
+    mapping_df["Circuit"] = mapping_df["Circuit"].astype(str).str.strip()
+    mapping_df = mapping_df[mapping_df["School_Name"] != ""]
+    return pd.Series(mapping_df["Circuit"].values, index=mapping_df["School_Name"]).to_dict()
+
+
+def load_circuit_mapping_df():
+    if not os.path.isfile(CIRCUITS_FILE):
+        return pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS)
+
+    try:
+        mapping_df = pd.read_csv(CIRCUITS_FILE, dtype=str).fillna("")
+    except Exception:
+        return pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS)
+
+    mapping_df.columns = [str(column).replace("\ufeff", "").strip() for column in mapping_df.columns]
+    columns_valid, _ = validate_circuit_columns(mapping_df.columns.tolist())
+    if not columns_valid:
+        return pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS)
+
+    mapping_df = clean_uploaded_dataframe(mapping_df)
+    mapping_df["School_Name"] = mapping_df["School_Name"].astype(str).str.strip()
+    mapping_df["Circuit"] = mapping_df["Circuit"].astype(str).str.strip()
+    mapping_df = mapping_df[(mapping_df["School_Name"] != "") & (mapping_df["Circuit"] != "")]
+    return mapping_df[EXPECTED_CIRCUIT_COLUMNS].drop_duplicates().reset_index(drop=True)
+
+
+def load_all_circuits():
+    lookup = load_circuit_lookup()
+    return sorted({str(circuit).strip() for circuit in lookup.values() if str(circuit).strip()})
+
+
+def combine_known_circuits(*sources):
+    circuits = set()
+    for source in sources:
+        if source is None:
+            continue
+        if isinstance(source, pd.DataFrame):
+            if "Circuit" not in source.columns:
+                continue
+            values = source["Circuit"].tolist()
+        elif isinstance(source, pd.Series):
+            values = source.tolist()
+        else:
+            values = list(source)
+
+        for value in values:
+            circuit = str(value).strip()
+            if circuit and circuit.lower() not in {"nan", "none"}:
+                circuits.add(circuit)
+    return sorted(circuits)
+
+
+def load_school_options():
+    circuits_df = load_circuit_mapping_df()
+    if circuits_df.empty:
+        return []
+    return sorted(circuits_df["School_Name"].dropna().astype(str).str.strip().unique().tolist())
+
+
+def get_circuit_file_status():
+    circuits_df = load_circuit_mapping_df()
+    if circuits_df.empty:
+        return {
+            "ready": False,
+            "severity": "info",
+            "message": "No active circuits file has been uploaded yet. The Director must load the official circuits CSV before school onboarding can continue.",
+        }
+    return {
+        "ready": True,
+        "severity": "success",
+        "message": f"Active circuits file ready: {len(circuits_df)} school-to-circuit mappings detected.",
+        "rows": len(circuits_df),
+    }
+
+
+def validate_data_columns(columns):
+    normalized_columns = [str(column).replace("\ufeff", "").strip() for column in columns]
+    if normalized_columns == EXPECTED_DATA_COLUMNS:
+        return True, "Column structure matches the required template."
+
+    if sorted(normalized_columns) == sorted(EXPECTED_DATA_COLUMNS) and len(normalized_columns) == len(EXPECTED_DATA_COLUMNS):
+        return True, "Column names match the required template."
+
+    missing_columns = [column for column in EXPECTED_DATA_COLUMNS if column not in normalized_columns]
+    extra_columns = [column for column in normalized_columns if column not in EXPECTED_DATA_COLUMNS]
+
+    message_parts = []
+    if missing_columns:
+        message_parts.append("Missing columns: " + ", ".join(missing_columns))
+    if extra_columns:
+        message_parts.append("Unexpected columns: " + ", ".join(extra_columns))
+    if not missing_columns and not extra_columns:
+        message_parts.append(
+            "The header names are correct but the column order was changed. Please use the template without editing the header row."
+        )
+
+    return False, "CSV template mismatch. " + " ".join(message_parts)
+
+
+def validate_circuit_columns(columns):
+    normalized_columns = [str(column).replace("\ufeff", "").strip() for column in columns]
+    if normalized_columns == EXPECTED_CIRCUIT_COLUMNS:
+        return True, "Circuit template columns match the required template."
+
+    missing_columns = [column for column in EXPECTED_CIRCUIT_COLUMNS if column not in normalized_columns]
+    extra_columns = [column for column in normalized_columns if column not in EXPECTED_CIRCUIT_COLUMNS]
+
+    message_parts = []
+    if missing_columns:
+        message_parts.append("Missing columns: " + ", ".join(missing_columns))
+    if extra_columns:
+        message_parts.append("Unexpected columns: " + ", ".join(extra_columns))
+    if not missing_columns and not extra_columns:
+        message_parts.append(
+            "The header names are correct but the column order was changed. Please use the template without editing the header row."
+        )
+
+    return False, "Circuit CSV template mismatch. " + " ".join(message_parts)
+
+
+def build_template_csv_bytes(columns):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(columns)
+    for _ in range(3):
+        writer.writerow([""] * len(columns))
+    footer_row = [""] * len(columns)
+    footer_row[0] = BLOOMCORE_FOOTER_TEXT
+    writer.writerow(footer_row)
+    return output.getvalue().encode("utf-8")
+
+
+def build_school_student_id_prefix(school):
+    school_slug = slugify_name(school)
+    school_hash = hashlib.sha1(str(school).strip().upper().encode("utf-8")).hexdigest()[:4].upper()
+    return f"{school_slug[:8]}-{school_hash}"
+
+
+def get_next_school_student_id_number(school, prefix):
+    if not os.path.isfile(DATA_FILE):
+        return 1
+
+    try:
+        student_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str}).fillna("")
+    except Exception:
+        return 1
+
+    student_df.columns = [str(column).replace("\ufeff", "").strip() for column in student_df.columns]
+    columns_valid, _ = validate_data_columns(student_df.columns.tolist())
+    if not columns_valid or "Student_ID" not in student_df.columns or "School_Name" not in student_df.columns:
+        return 1
+
+    student_df = clean_uploaded_dataframe(student_df)
+    school_ids = student_df.loc[
+        student_df["School_Name"].fillna("").astype(str).str.strip().eq(str(school).strip()),
+        "Student_ID",
+    ].fillna("").astype(str).str.strip()
+
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$")
+    matching_numbers = []
+    for student_id in school_ids:
+        match = pattern.match(student_id)
+        if match:
+            matching_numbers.append(int(match.group(1)))
+
+    return (max(matching_numbers) + 1) if matching_numbers else 1
+
+
+def resolve_attendance_default_value(uploaded_df=None, existing_school_df=None, existing_all_df=None):
+    candidate_series = []
+    if uploaded_df is not None and "Attendance_Percent" in uploaded_df.columns:
+        candidate_series.append(pd.to_numeric(uploaded_df["Attendance_Percent"], errors="coerce"))
+    if existing_school_df is not None and "Attendance_Percent" in existing_school_df.columns:
+        candidate_series.append(pd.to_numeric(existing_school_df["Attendance_Percent"], errors="coerce"))
+    if existing_all_df is not None and "Attendance_Percent" in existing_all_df.columns:
+        candidate_series.append(pd.to_numeric(existing_all_df["Attendance_Percent"], errors="coerce"))
+
+    for series in candidate_series:
+        if series.notna().any():
+            return round(float(series.dropna().mean()), 1)
+    return 75.0
+
+
+def autofill_missing_attendance(student_df, existing_school_df=None, existing_all_df=None):
+    if student_df.empty or "Attendance_Percent" not in student_df.columns:
+        return student_df.copy(), 0, None
+
+    filled_df = student_df.copy()
+    attendance_values = pd.to_numeric(filled_df["Attendance_Percent"], errors="coerce")
+    missing_mask = attendance_values.isna()
+    missing_count = int(missing_mask.sum())
+    if missing_count == 0:
+        return filled_df, 0, None
+
+    default_value = resolve_attendance_default_value(
+        uploaded_df=filled_df,
+        existing_school_df=existing_school_df,
+        existing_all_df=existing_all_df,
+    )
+    filled_df.loc[missing_mask, "Attendance_Percent"] = default_value
+    return filled_df, missing_count, default_value
+
+
+def assign_missing_school_student_ids(student_df, school, existing_school_df=None):
+    if student_df.empty or "Student_ID" not in student_df.columns:
+        return student_df.copy(), 0
+
+    assigned_df = student_df.copy()
+    prefix = build_school_student_id_prefix(school)
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$")
+    used_numbers = set()
+
+    for source_df in [existing_school_df, assigned_df]:
+        if source_df is None or source_df.empty or "Student_ID" not in source_df.columns:
+            continue
+        source_ids = source_df["Student_ID"].fillna("").astype(str).str.strip()
+        for student_id in source_ids:
+            match = pattern.match(student_id)
+            if match:
+                used_numbers.add(int(match.group(1)))
+
+    next_number = (max(used_numbers) + 1) if used_numbers else 1
+    missing_id_mask = assigned_df["Student_ID"].fillna("").astype(str).str.strip().eq("")
+    missing_count = int(missing_id_mask.sum())
+
+    if missing_count == 0:
+        return assigned_df, 0
+
+    generated_ids = []
+    for _ in range(missing_count):
+        while next_number in used_numbers:
+            next_number += 1
+        generated_ids.append(f"{prefix}-{next_number:04d}")
+        used_numbers.add(next_number)
+        next_number += 1
+
+    assigned_df.loc[missing_id_mask, "Student_ID"] = generated_ids
+    return assigned_df, missing_count
+
+
+def build_headteacher_student_template_bytes(school, circuit=""):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(EXPECTED_DATA_COLUMNS)
+
+    student_id_index = EXPECTED_DATA_COLUMNS.index("Student_ID")
+    school_index = EXPECTED_DATA_COLUMNS.index("School_Name")
+    circuit_index = EXPECTED_DATA_COLUMNS.index("Circuit")
+    student_id_prefix = build_school_student_id_prefix(school)
+    next_number = get_next_school_student_id_number(school, student_id_prefix)
+
+    for offset in range(HEADTEACHER_TEMPLATE_ROWS):
+        row = [""] * len(EXPECTED_DATA_COLUMNS)
+        row[student_id_index] = f"{student_id_prefix}-{next_number + offset:04d}"
+        row[school_index] = school
+        row[circuit_index] = circuit
+        writer.writerow(row)
+
+    footer_row = [""] * len(EXPECTED_DATA_COLUMNS)
+    footer_row[0] = BLOOMCORE_FOOTER_TEXT
+    writer.writerow(footer_row)
+    return output.getvalue().encode("utf-8")
+
+
+def clean_uploaded_dataframe(df):
+    cleaned_df = df.copy()
+    cleaned_df.columns = [str(column).replace("\ufeff", "").strip() for column in cleaned_df.columns]
+    cleaned_df = cleaned_df.dropna(how="all")
+    if cleaned_df.empty:
+        return cleaned_df
+
+    first_column = cleaned_df.columns[0]
+    footer_mask = cleaned_df[first_column].fillna("").astype(str).str.strip().eq(BLOOMCORE_FOOTER_TEXT)
+    cleaned_df = cleaned_df.loc[~footer_mask].copy()
+    cleaned_df = cleaned_df.dropna(how="all")
+    return cleaned_df
+
+
+def get_data_file_status():
+    if not os.path.isfile(DATA_FILE):
+        return {
+            "ready": False,
+            "severity": "info",
+            "message": "No active student dataset has been synced yet. Headteachers will upload their own school CSV files after the Director loads the circuits map.",
+        }
+
+    if os.path.getsize(DATA_FILE) == 0:
+        return {
+            "ready": False,
+            "severity": "warning",
+            "message": "The active student dataset file is empty. Ask the relevant Headteacher to sync a filled school CSV.",
+        }
+
+    try:
+        header_df = pd.read_csv(DATA_FILE, nrows=0)
+    except pd.errors.EmptyDataError:
+        return {
+            "ready": False,
+            "severity": "warning",
+            "message": "The active CSV file has no readable header row. Upload a fresh template-based file.",
+        }
+    except Exception as exc:
+        return {
+            "ready": False,
+            "severity": "error",
+            "message": f"The active CSV file could not be opened: {exc}",
+        }
+
+    columns_valid, column_message = validate_data_columns(header_df.columns.tolist())
+    if not columns_valid:
+        return {
+            "ready": False,
+            "severity": "error",
+            "message": column_message,
+        }
+
+    try:
+        data_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+    except Exception as exc:
+        return {
+            "ready": False,
+            "severity": "error",
+            "message": f"The active CSV file could not be fully read: {exc}",
+        }
+
+    if data_df.empty:
+        return {
+            "ready": False,
+            "severity": "warning",
+            "message": "The student dataset file is present, but no school has synced student rows yet.",
+        }
+
+    return {
+        "ready": True,
+        "severity": "success",
+        "message": f"Active dataset ready: {len(data_df)} student rows detected.",
+        "rows": len(data_df),
+    }
+
+
+def get_school_sync_status(school):
+    school = str(school).strip()
+    if not school:
+        return {
+            "ready": False,
+            "severity": "warning",
+            "rows": 0,
+            "message": "No school was attached to this Headteacher account.",
+        }
+
+    if not os.path.isfile(DATA_FILE):
+        return {
+            "ready": False,
+            "severity": "info",
+            "rows": 0,
+            "message": f"No student dataset has been synced yet for {school}. Upload the school CSV first.",
+        }
+
+    try:
+        student_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str}).fillna("")
+    except Exception as exc:
+        return {
+            "ready": False,
+            "severity": "error",
+            "rows": 0,
+            "message": f"The active student dataset could not be read for {school}: {exc}",
+        }
+
+    student_df.columns = [str(column).replace("\ufeff", "").strip() for column in student_df.columns]
+    columns_valid, column_message = validate_data_columns(student_df.columns.tolist())
+    if not columns_valid:
+        return {
+            "ready": False,
+            "severity": "error",
+            "rows": 0,
+            "message": column_message,
+        }
+
+    student_df = clean_uploaded_dataframe(student_df)
+    if "School_Name" not in student_df.columns:
+        return {
+            "ready": False,
+            "severity": "error",
+            "rows": 0,
+            "message": "The active student dataset does not contain a School_Name column.",
+        }
+
+    school_mask = student_df["School_Name"].fillna("").astype(str).str.strip().eq(school)
+    school_rows = int(school_mask.sum())
+    if school_rows == 0:
+        return {
+            "ready": False,
+            "severity": "info",
+            "rows": 0,
+            "message": f"{school} has not synced any student rows yet. Upload the school CSV before first login.",
+        }
+
+    return {
+        "ready": True,
+        "severity": "success",
+        "rows": school_rows,
+        "message": f"{school} is synced with {school_rows} student rows.",
+    }
+
+
+def render_status_message(status):
+    severity = status.get("severity", "info")
+    message = status.get("message", "")
+    if severity == "success":
+        st.success(message)
+    elif severity == "warning":
+        st.warning(message)
+    elif severity == "error":
+        st.error(message)
+    else:
+        st.info(message)
+
+
+def show_auth_flash():
+    message = st.session_state.get("auth_flash_message", "")
+    if not message:
+        return
+
+    severity = st.session_state.get("auth_flash_severity", "success")
+    if severity == "error":
+        st.error(message)
+    elif severity == "warning":
+        st.warning(message)
+    else:
+        st.success(message)
+
+    st.session_state["auth_flash_message"] = ""
+    st.session_state["auth_flash_severity"] = "success"
+
+
+def show_portal_flash():
+    message = st.session_state.get("portal_flash_message", "")
+    if not message:
+        return
+
+    severity = st.session_state.get("portal_flash_severity", "success")
+    if severity == "error":
+        st.error(message)
+    elif severity == "warning":
+        st.warning(message)
+    else:
+        st.success(message)
+
+    st.session_state["portal_flash_message"] = ""
+    st.session_state["portal_flash_severity"] = "success"
+
+
+# ============================================================
+# 6. DATA LOADING, SCORING RULES, AND GENERAL CALCULATIONS
+# ============================================================
+@st.cache_data
+def load_data(show_errors=True):
+    status = get_data_file_status()
+    if not status["ready"]:
+        if show_errors:
+            render_status_message(status)
+        return pd.DataFrame(), []
+
+    try:
+        df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+    except Exception as exc:
+        st.error(f"Critical data error: {exc}")
+        return pd.DataFrame(), []
+
+    df.columns = [str(column).replace("\ufeff", "").strip() for column in df.columns]
+
+    for column in ["Student_ID", "Student_Name", "School_Name", "Gender", "Circuit", "Action_Zone"]:
+        if column in df.columns:
+            df[column] = df[column].fillna("").astype(str).str.strip()
+            df.loc[df[column].isin(["nan", "None"]), column] = ""
+
+    circuit_lookup = load_circuit_lookup()
+    if "School_Name" in df.columns:
+        existing_circuit = (
+            df["Circuit"].fillna("").astype(str).str.strip()
+            if "Circuit" in df.columns
+            else pd.Series("", index=df.index, dtype="object")
+        )
+        existing_circuit = existing_circuit.mask(existing_circuit.eq(""), pd.NA)
+        mapped_circuit = df["School_Name"].map(circuit_lookup)
+        df["Circuit"] = existing_circuit.fillna(mapped_circuit).fillna(df["School_Name"])
+        df["Circuit"] = df["Circuit"].fillna("").astype(str).str.strip()
+
+    subject_cols = [column for column in df.columns if column.endswith(FINAL_SUFFIX)]
+
+    if "Student_Name" in df.columns and "Student_ID" in df.columns:
+        df["Search_Label"] = (
+            df["Student_Name"].fillna("").astype(str).str.strip()
+            + " ("
+            + df["Student_ID"].fillna("").astype(str).str.strip()
+            + ")"
+        )
+
+    return df, subject_cols
+
+
+def get_bece_grade(score):
+    if pd.isna(score):
+        return 9
+
+    score = float(score)
+    if score >= 80:
+        return 1
+    if score >= 70:
+        return 2
+    if score >= 60:
+        return 3
+    if score >= 55:
+        return 4
+    if score >= 50:
+        return 5
+    if score >= 45:
+        return 6
+    if score >= 40:
+        return 7
+    if score >= 35:
+        return 8
+    return 9
+
+
+def grade_to_score(grade):
+    grade = int(grade)
+    return max(0, min(100, 100 - (grade * 10) + 5))
+
+
+def classify_cssps_tie_break(best_six_raw_total):
+    best_six_raw_total = safe_float(best_six_raw_total, 0.0)
+    if best_six_raw_total >= 480:
+        return "Very Strong Tie-Break"
+    if best_six_raw_total >= 450:
+        return "Strong Tie-Break"
+    if best_six_raw_total >= 420:
+        return "Competitive Tie-Break"
+    return "Tie-Break Risk"
+
+
+def predict_placement(aggregate, best_six_raw_total=None, include_tie_break=False):
+    if aggregate <= 10:
+        if include_tie_break and best_six_raw_total is not None:
+            return f"Category A | {classify_cssps_tie_break(best_six_raw_total)}"
+        return "Category A"
+    if aggregate <= 20:
+        return "Category B"
+    if aggregate <= 35:
+        return "Category C"
+    return "Category D/SP"
+
+
+def normalize_gender(value):
+    text = str(value).strip().lower()
+    if text in {"f", "female", "girl", "girls"}:
+        return "Girls"
+    if text in {"m", "male", "boy", "boys"}:
+        return "Boys"
+    if text in {"", "nan", "none"}:
+        return "Unspecified"
+    return str(value).strip().title()
+
+
+def format_subject_name(subject_col):
+    return subject_col.replace(FINAL_SUFFIX, "").replace("_", " ")
+
+
+def is_core_subject(subject_col):
+    return subject_col in CORE_FINAL_SUBJECTS
+
+
+def safe_float(value, default=0.0):
+    try:
+        if pd.isna(value):
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def average_row_values(row, columns, default):
+    if not columns:
+        return default
+
+    values = pd.to_numeric(pd.Series([row.get(column) for column in columns]), errors="coerce")
+    if values.notna().any():
+        return float(values.mean())
+    return default
+
+
+def action_zone_from_average(score):
+    if score >= 70:
+        return "1. FLYER"
+    if score >= 60:
+        return "2. DIAMOND"
+    if score >= 50:
+        return "3. STEADY"
+    return "4. CRITICAL"
+
+
+# ============================================================
+# 7. ML FORECASTING ENGINE AND BECE OUTCOME COMPUTATION
+# ============================================================
+def get_file_signature(path):
+    if not os.path.isfile(path):
+        return ""
+    stat = os.stat(path)
+    return f"{int(stat.st_mtime_ns)}-{stat.st_size}"
+
+
+def normalize_header_text(value):
+    return re.sub(r"[^a-z0-9]+", "", str(value).strip().lower())
+
+
+def get_subject_prefix(subject_col):
+    return str(subject_col).replace(FINAL_SUFFIX, "")
+
+
+def get_subject_model_key(subject_col):
+    return get_subject_prefix(subject_col)
+
+
+def get_subject_source_columns(subject_col):
+    prefix = get_subject_prefix(subject_col)
+    return {
+        "assignments": f"{prefix}_Assignments",
+        "term1": f"{prefix}_Term1_Exam",
+        "term2": f"{prefix}_Term2_Exam",
+        "mock1": f"{prefix}_Mock1",
+        "mock2": f"{prefix}_Mock2",
+        "final": subject_col,
+    }
+
+
+def safe_mean(values, default=0.0):
+    numeric = pd.to_numeric(pd.Series(list(values)), errors="coerce").dropna()
+    if numeric.empty:
+        return default
+    return float(numeric.mean())
+
+
+def compute_continuous_assessment_score(row, subject_col):
+    columns = get_subject_source_columns(subject_col)
+    return safe_mean(
+        [
+            row.get(columns["assignments"]),
+            row.get(columns["term1"]),
+            row.get(columns["term2"]),
+        ],
+        default=safe_float(row.get(columns["mock2"]), safe_float(row.get(subject_col), 50.0)),
+    )
+
+
+def build_subject_feature_snapshot(row, subject_col, attendance_value=None, assignment_value=None, mock_value=None):
+    columns = get_subject_source_columns(subject_col)
+    current_final = safe_float(row.get(columns["final"]), 50.0)
+    attendance = safe_float(row.get("Attendance_Percent"), 75.0)
+    assignments = safe_float(row.get(columns["assignments"]), current_final)
+    term1 = safe_float(row.get(columns["term1"]), assignments)
+    term2 = safe_float(row.get(columns["term2"]), assignments)
+    mock1 = safe_float(row.get(columns["mock1"]), term2)
+    mock2 = safe_float(row.get(columns["mock2"]), current_final)
+
+    if attendance_value is not None:
+        attendance = float(attendance_value)
+    if assignment_value is not None:
+        assignments = float(assignment_value)
+    if mock_value is not None:
+        mock2 = float(mock_value)
+
+    original_improvement = mock2 - mock1
+    if mock_value is not None:
+        mock1 = max(0.0, min(100.0, float(mock_value) - original_improvement))
+        term2 = safe_float(row.get(columns["term2"]), float(mock_value))
+
+    continuous_assessment = safe_mean([assignments, term1, term2], default=assignments)
+    improvement = mock2 - mock1
+    consistency = assignments - mock2
+    weighted_proxy = (continuous_assessment * 0.30) + (mock2 * 0.70)
+
+    feature_snapshot = {
+        "Attendance_Percent": max(0.0, min(100.0, attendance)),
+        columns["assignments"]: max(0.0, min(100.0, assignments)),
+        columns["term1"]: max(0.0, min(100.0, term1)),
+        columns["term2"]: max(0.0, min(100.0, term2)),
+        columns["mock1"]: max(0.0, min(100.0, mock1)),
+        columns["mock2"]: max(0.0, min(100.0, mock2)),
+        f"{get_subject_prefix(subject_col)}_Continuous_Assessment": max(0.0, min(100.0, continuous_assessment)),
+        f"{get_subject_prefix(subject_col)}_CA_30_Component": max(0.0, min(100.0, continuous_assessment * 0.30)),
+        f"{get_subject_prefix(subject_col)}_Exam_70_Proxy": max(0.0, min(100.0, mock2 * 0.70)),
+        f"{get_subject_prefix(subject_col)}_Weighted_30_70_Proxy": max(0.0, min(100.0, weighted_proxy)),
+        f"{get_subject_prefix(subject_col)}_Improvement": improvement,
+        f"{get_subject_prefix(subject_col)}_Consistency": consistency,
+    }
+    return feature_snapshot
+
+
+@st.cache_resource(show_spinner=False)
+def load_pretrained_ml_models(model_signature):
+    # The predictor now loads externally trained subject models from
+    # bece_models.joblib instead of training new models inside the app.
+    if not model_signature:
+        return {}
+
+    try:
+        raw_bundle = joblib.load(MODEL_FILE)
+    except Exception:
+        return {}
+
+    if not isinstance(raw_bundle, dict):
+        return {}
+
+    bundle = {}
+    for subject_key, estimator in raw_bundle.items():
+        feature_columns = list(getattr(estimator, "feature_names_in_", []))
+        if not feature_columns:
+            continue
+        bundle[str(subject_key).strip()] = {
+            "model": estimator,
+            "feature_columns": feature_columns,
+            "train_rows": np.nan,
+            "cv_r2": np.nan,
+            "cv_mae": np.nan,
+            "source": MODEL_FILE,
+        }
+    return bundle
+
+
+@st.cache_resource(show_spinner=False)
+def load_calibration(calibration_signature):
+    if not calibration_signature:
+        return {}
+
+    try:
+        with open(CALIBRATION_FILE, "r", encoding="utf-8") as handle:
+            calibration_map = json.load(handle)
+    except Exception:
+        return {}
+
+    return calibration_map if isinstance(calibration_map, dict) else {}
+
+
+def get_live_ml_bundle():
+    return load_pretrained_ml_models(get_file_signature(MODEL_FILE))
+
+
+def get_live_calibration_map():
+    return load_calibration(get_file_signature(CALIBRATION_FILE))
+
+
+def get_school_subject_bias(calibration_map, school_name, subject_col):
+    school_key = str(school_name).strip()
+    subject_key = get_subject_model_key(subject_col)
+    school_map = calibration_map.get(school_key, {})
+    if not isinstance(school_map, dict):
+        return 0.0
+    return safe_float(school_map.get(subject_key, 0.0), 0.0)
+
+
+def predict_subject_score_ml(row, subject_col, model_bundle, attendance_value=None, assignment_value=None, mock_value=None):
+    # Build the exact feature vector expected by the pretrained model and
+    # fall back to the weighted 30/70 proxy only if a subject model is missing.
+    feature_snapshot = build_subject_feature_snapshot(
+        row,
+        subject_col,
+        attendance_value=attendance_value,
+        assignment_value=assignment_value,
+        mock_value=mock_value,
+    )
+    calibration_map = get_live_calibration_map()
+    school_bias = get_school_subject_bias(calibration_map, row.get("School_Name", ""), subject_col)
+    model_details = model_bundle.get(get_subject_model_key(subject_col))
+    baseline_score = safe_float(row.get(subject_col), feature_snapshot[f"{get_subject_prefix(subject_col)}_Weighted_30_70_Proxy"])
+
+    if not model_details:
+        predicted_score = feature_snapshot[f"{get_subject_prefix(subject_col)}_Weighted_30_70_Proxy"]
+        model_status = "Weighted 30/70 fallback"
+    else:
+        feature_frame = pd.DataFrame([feature_snapshot])[model_details["feature_columns"]]
+        predicted_score = float(model_details["model"].predict(feature_frame)[0])
+        model_status = "Calibrated ML model"
+
+    predicted_score = max(0.0, min(100.0, predicted_score + school_bias))
+    return {
+        "subject_col": subject_col,
+        "subject_name": format_subject_name(subject_col),
+        "current_score": round(baseline_score, 1),
+        "predicted_score": round(predicted_score, 1),
+        "predicted_grade": get_bece_grade(predicted_score),
+        "continuous_assessment": round(feature_snapshot[f"{get_subject_prefix(subject_col)}_Continuous_Assessment"], 1),
+        "ca_30_component": round(feature_snapshot[f"{get_subject_prefix(subject_col)}_CA_30_Component"], 1),
+        "exam_70_proxy": round(feature_snapshot[f"{get_subject_prefix(subject_col)}_Exam_70_Proxy"], 1),
+        "weighted_30_70_proxy": round(feature_snapshot[f"{get_subject_prefix(subject_col)}_Weighted_30_70_Proxy"], 1),
+        "model_status": model_status,
+        "school_bias": round(school_bias, 2),
+    }
+
+
+def compute_student_outcome_details(row, subject_cols, score_override=None):
+    score_override = score_override or {}
+    subject_details = []
+    core_details = []
+    elective_details = []
+
+    for subject in subject_cols:
+        raw_score = score_override.get(subject, row.get(subject))
+        numeric_score = pd.to_numeric(pd.Series([raw_score]), errors="coerce").iloc[0]
+        if pd.isna(numeric_score):
+            continue
+
+        grade = get_bece_grade(numeric_score)
+        detail = {
+            "subject_col": subject,
+            "subject_name": format_subject_name(subject),
+            "score": float(numeric_score),
+            "grade": grade,
+        }
+        subject_details.append(detail)
+        if is_core_subject(subject):
+            core_details.append(detail)
+        else:
+            elective_details.append(detail)
+
+    best_two_electives = sorted(
+        elective_details,
+        key=lambda item: (item["grade"], -item["score"], item["subject_name"]),
+    )[:2]
+    aggregate = sum(item["grade"] for item in core_details) + sum(item["grade"] for item in best_two_electives)
+    best_six_raw_total = sum(item["score"] for item in core_details) + sum(item["score"] for item in best_two_electives)
+    best_six_subjects = core_details + best_two_electives
+    raw_average = (best_six_raw_total / len(best_six_subjects)) if best_six_subjects else 0.0
+
+    return {
+        "aggregate": float(aggregate),
+        "core_details": core_details,
+        "elective_details": elective_details,
+        "best_two_electives": best_two_electives,
+        "best_two_subject_names": ", ".join(item["subject_name"] for item in best_two_electives) or "None selected",
+        "best_six_raw_total": round(float(best_six_raw_total), 1),
+        "raw_average": round(float(raw_average), 1),
+        "subject_details": subject_details,
+        "placement": predict_placement(aggregate),
+        "placement_outlook": predict_placement(aggregate, best_six_raw_total=best_six_raw_total, include_tie_break=True),
+        "tie_break_band": classify_cssps_tie_break(best_six_raw_total) if aggregate <= 10 else "",
+    }
+
+
+def compute_student_aggregate(row, subject_cols):
+    outcome_details = compute_student_outcome_details(row, subject_cols)
+    core_grades = [item["grade"] for item in outcome_details["core_details"]]
+    elective_grades = [item["grade"] for item in outcome_details["elective_details"]]
+    return outcome_details["aggregate"], core_grades, elective_grades
+
+
+def build_aggregate_dataframe(df, subject_cols):
+    if df.empty or not subject_cols:
+        return pd.DataFrame()
+
+    rows = []
+    for _, student_row in df.iterrows():
+        outcome_details = compute_student_outcome_details(student_row, subject_cols)
+        row = {
+            "Student_ID": student_row.get("Student_ID", ""),
+            "Student_Name": student_row.get("Student_Name", ""),
+            "School_Name": student_row.get("School_Name", ""),
+            "Circuit": student_row.get("Circuit", student_row.get("School_Name", "")),
+            "Aggregate": outcome_details["aggregate"],
+            "Passed": 1 if outcome_details["aggregate"] <= 30 else 0,
+            "Placement_Category": outcome_details["placement"],
+            "Best_Two_Electives": outcome_details["best_two_subject_names"],
+            "Best_Six_Raw_Total": outcome_details["best_six_raw_total"],
+            "Best_Six_Raw_Average": outcome_details["raw_average"],
+        }
+        if "Gender" in df.columns:
+            row["Gender"] = normalize_gender(student_row.get("Gender", ""))
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def render_scroll_to_top():
+    st.markdown(
+        '<div class="scroll-top-link"><a href="#page-top">↑ Scroll to top</a></div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# 8. SIDEBAR, AUTHENTICATION, AND LOGIN/REGISTRATION FLOWS
+# ============================================================
+def render_sidebar(df, subject_cols, role, school):
+    scope_label = get_scope_label()
+    if role == "Director":
+        scope_df = df.copy()
+    elif "School_Name" in df.columns:
+        scope_df = df[df["School_Name"] == school].copy()
+    else:
+        scope_df = pd.DataFrame()
+    scope_agg_df = build_aggregate_dataframe(scope_df, subject_cols)
+    scope_student_count = len(scope_df)
+    scope_subject_count = len(subject_cols)
+    scope_avg_agg = f"{scope_agg_df['Aggregate'].mean():.1f}" if not scope_agg_df.empty else "--"
+    scope_pass_rate = f"{scope_agg_df['Passed'].mean() * 100:.1f}%" if not scope_agg_df.empty else "--"
+    scope_school_count = scope_df["School_Name"].nunique() if "School_Name" in scope_df.columns else 0
+    scope_circuit_count = scope_df["Circuit"].nunique() if "Circuit" in scope_df.columns else 0
+    scope_circuits = (
+        sorted(scope_df["Circuit"].dropna().astype(str).str.strip().unique().tolist())
+        if "Circuit" in scope_df.columns
+        else []
+    )
+
+    with st.sidebar:
+        if os.path.isfile(BRAND_IMAGE):
+            st.image(BRAND_IMAGE, use_container_width=True)
+        st.markdown(
+            f"""
+            <div class="sidebar-brand-card">
+                <div class="sidebar-kicker">The Basic Education Transition Analyzer</div>
+                <div class="sidebar-title">EduPulse</div>
+                <div class="sidebar-subtitle">{scope_label} insights and forecasting</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.write(f"**Logged in as:** {st.session_state['current_user']}")
+        st.caption(f"{role} access for {scope_label}" if role == "Director" else f"{role} access for {school}")
+
+        st.markdown("#### Quick Snapshot")
+        top_metrics = st.columns(2)
+        with top_metrics[0]:
+            st.metric("Students", scope_student_count)
+        with top_metrics[1]:
+            st.metric("Subjects", scope_subject_count)
+
+        lower_metrics = st.columns(2)
+        with lower_metrics[0]:
+            st.metric("Avg Agg", scope_avg_agg)
+        with lower_metrics[1]:
+            st.metric("Pass Rate", scope_pass_rate)
+
+        with st.expander("📌 Coverage Summary"):
+            if role == "Director":
+                st.write(f"Schools loaded: {scope_school_count}")
+                st.write(f"Active circuits in data: {scope_circuit_count}")
+                st.write(f"Mapped circuits total: {len(load_all_circuits())}")
+            else:
+                st.write(f"School: {school}")
+                st.write(f"Circuit: {', '.join(scope_circuits) if scope_circuits else 'Not mapped'}")
+                st.write(f"Students loaded: {scope_student_count}")
+            st.write(f"BECE subjects tracked: {scope_subject_count}")
+
+        with st.expander("🎯 Placement Guide"):
+            st.write("Category A: Aggregate 6-10")
+            st.write("Category B: Aggregate 11-20")
+            st.write("Category C: Aggregate 21-35")
+            st.write("Category D/SP: Aggregate 36+")
+
+        if role == "Director":
+            unread_notifications = get_notifications("Director", district=scope_label, unread_only=True)
+            all_notifications = get_notifications("Director", district=scope_label, unread_only=False)
+            with st.expander(f"🔔 Director Alerts ({len(unread_notifications)})", expanded=len(unread_notifications) > 0):
+                if all_notifications.empty:
+                    st.caption("No director alerts yet.")
+                else:
+                    for _, notification in all_notifications.head(8).iterrows():
+                        st.write(notification["message"])
+                        st.caption(notification["created_at"])
+                    if len(all_notifications) > 8:
+                        st.caption(f"Showing latest 8 of {len(all_notifications)} alerts.")
+                    if not unread_notifications.empty and st.button(
+                        "Mark Alerts as Read",
+                        key="mark_director_alerts_read",
+                        use_container_width=True,
+                    ):
+                        mark_notifications_as_read("Director", district=scope_label)
+                        st.rerun()
+
+        st.markdown("---")
+        with st.expander("📖 Action Zone Dictionary"):
+            st.write("**🚀 FLYER**: Excellent! Scoring 70%+ across subjects.")
+            st.write("**💎 DIAMOND**: Great potential (60-69%). Needs a small push.")
+            st.write("**📈 STEADY**: Average (50-59%). Needs to avoid falling.")
+            st.write("**⚠️ CRITICAL**: Below 50%. Needs urgent intervention.")
+
+        if st.button("Refresh Dashboard", key="refresh_dashboard", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+
+        footer = st.container()
+        with footer:
+            st.markdown("---")
+            if st.button("Logout", key="sidebar_logout", use_container_width=True):
+                for key in ["logged_in", "current_user", "user_role", "user_school", "user_district"]:
+                    st.session_state[key] = False if key == "logged_in" else ""
+                st.session_state["auth_nav"] = "Login"
+                st.session_state["pending_setup_role"] = ""
+                st.rerun()
+            st.markdown(
+                '<div class="sidebar-footer-text">Powered by BloomCore Technologies</div>',
+                unsafe_allow_html=True,
+            )
+
+
+def login_ui():
+    active_config = load_app_config()
+    active_scope_label = active_config["district_name"] or "District/Municipal"
+    st.title(f"🔐 {APP_TITLE}")
+    menu = ["Login", "Register Director", "Register Headteacher"]
+    if st.session_state.get("auth_nav") not in menu:
+        st.session_state["auth_nav"] = "Login"
+    choice = st.sidebar.selectbox("Navigation", menu, index=menu.index(st.session_state["auth_nav"]))
+    st.session_state["auth_nav"] = choice
+
+    if choice == "Login":
+        show_auth_flash()
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Login", type="primary"):
+            all_users = {**MASTER_CREDENTIALS, **load_users()}
+            user_record = all_users.get(username)
+
+            if not (user_record and verify_password(password, user_record["password"])):
+                st.error("Invalid credentials.")
+            elif user_record["role"] == "Headteacher":
+                school_sync_status = get_school_sync_status(user_record["school"])
+                if not school_sync_status["ready"]:
+                    st.session_state["pending_setup_role"] = "Headteacher"
+                    st.session_state["latest_registered_school"] = user_record["school"]
+                    st.session_state["latest_registered_district"] = user_record.get("district", "") or active_scope_label
+                    render_status_message(school_sync_status)
+                else:
+                    st.session_state.update(
+                        {
+                            "logged_in": True,
+                            "current_user": username,
+                            "user_role": user_record["role"],
+                            "user_school": user_record["school"],
+                            "user_district": user_record.get("district", ""),
+                        }
+                    )
+                    st.session_state["pending_setup_role"] = ""
+                    st.rerun()
+            else:
+                st.session_state.update(
+                    {
+                        "logged_in": True,
+                        "current_user": username,
+                        "user_role": user_record["role"],
+                        "user_school": user_record["school"],
+                        "user_district": user_record.get("district", ""),
+                    }
+                )
+                st.session_state["pending_setup_role"] = ""
+                if user_record["role"] == "Director":
+                    activate_director_context(
+                        username,
+                        user_record.get("district", "") or active_scope_label,
+                        user_record.get("security_key", "") or active_config.get("headteacher_security_key", ""),
+                    )
+                st.rerun()
+
+        if st.session_state.get("pending_setup_role") == "Director":
+            st.markdown("---")
+            render_circuit_setup(
+                title="🗺️ Pre-Login Circuits Setup",
+                description=(
+                    f"Before logging in to {active_scope_label}, you can download the official circuits template, fill it, and upload it here."
+                ),
+                key_prefix="prelogin_director_circuit_setup",
+                redirect_to_login=True,
+            )
+        elif st.session_state.get("pending_setup_role") == "Headteacher" and st.session_state.get("latest_registered_school"):
+            st.markdown("---")
+            render_headteacher_bulk_upload(
+                st.session_state["latest_registered_school"],
+                key_prefix="prelogin_headteacher_student_upload",
+                redirect_to_login=True,
+            )
+
+    elif choice == "Register Director":
+        st.title("📝 Director Registration")
+        st.write(
+            "Create the Director account for a new district or municipality. A district-based security key will be generated automatically for Headteachers to use during registration."
+        )
+
+        if active_config["district_name"]:
+            st.info(
+                f"Current active deployment: {active_config['district_name']} | Headteacher key: {active_config['headteacher_security_key']}"
+            )
+
+        with st.form("director_registration_form"):
+            district_name = st.text_input("District/Municipal Name")
+            username = st.text_input("Director Username")
+            password = st.text_input("Password", type="password")
+            confirm_password = st.text_input("Confirm Password", type="password")
+
+            if st.form_submit_button("Create Director Account"):
+                if password != confirm_password:
+                    st.error("Passwords do not match.")
+                else:
+                    security_key = generate_security_key(district_name)
+                    try:
+                        result = register_user(
+                            username,
+                            password,
+                            "Director",
+                            "ALL",
+                            district=district_name,
+                            security_key=security_key,
+                        )
+                        activate_director_context(result["username"], result["district"], result["security_key"])
+                        initialize_empty_circuit_dataset()
+                        initialize_empty_student_dataset()
+                        st.session_state["latest_director_key"] = result["security_key"]
+                        st.session_state["latest_registered_district"] = result["district"]
+                        st.session_state["auth_nav"] = "Login"
+                        st.session_state["pending_setup_role"] = "Director"
+                        st.session_state["auth_flash_message"] = (
+                            f"Director account created for {result['district']}. Headteacher security key: {result['security_key']}"
+                        )
+                        st.session_state["auth_flash_severity"] = "success"
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
+
+    else:
+        st.title("📝 Headteacher Registration")
+        if not active_config["headteacher_security_key"]:
+            st.warning("A Director must register first so the app can generate a valid Headteacher security key.")
+            return
+
+        st.info(f"Active District/Municipality: {active_scope_label}")
+        reg_code = st.text_input(
+            "District/Municipal Security Key",
+            type="password",
+            help="Contact District/Municipal Office for code",
+        )
+
+        if reg_code == active_config["headteacher_security_key"]:
+            school_options = load_school_options()
+            if not school_options:
+                st.warning("The Director must upload the circuits CSV first so Headteachers can choose their school.")
+                return
+
+            with st.form("registration_form"):
+                username = st.text_input("New Username")
+                password = st.text_input("New Password", type="password")
+                confirm_password = st.text_input("Confirm Password", type="password")
+                school = st.selectbox("Select Your School", school_options)
+
+                if st.form_submit_button("Create Account"):
+                    if password != confirm_password:
+                        st.error("Passwords do not match.")
+                    else:
+                        try:
+                            result = register_user(
+                                username,
+                                password,
+                                "Headteacher",
+                                school,
+                                district=active_scope_label,
+                            )
+                            st.session_state["latest_registered_school"] = result["school"]
+                            st.session_state["latest_registered_district"] = active_scope_label
+                            st.session_state["auth_nav"] = "Login"
+                            st.session_state["pending_setup_role"] = "Headteacher"
+                            st.session_state["auth_flash_message"] = (
+                                f"Headteacher account created for {result['school']}. You can upload student data before logging in."
+                            )
+                            st.session_state["auth_flash_severity"] = "success"
+                            st.rerun()
+                        except ValueError as exc:
+                            st.error(str(exc))
+
+        elif reg_code != "":
+            st.error("Incorrect District/Municipal Security Key.")
+
+
+def render_metric_card(label, value, delta=None, delta_color="normal", help_text=None):
+    st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+    st.metric(label, value, delta=delta, delta_color=delta_color, help=help_text)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# 9. DATA IMPORT, SCHOOL SYNC, AND SCENARIO STORAGE HELPERS
+# ============================================================
+def read_uploaded_csv(uploaded_file, dtype=None):
+    uploaded_bytes = uploaded_file.getvalue()
+    uploaded_df = pd.read_csv(io.BytesIO(uploaded_bytes), dtype=dtype)
+    uploaded_df = clean_uploaded_dataframe(uploaded_df)
+    return uploaded_bytes, uploaded_df
+
+
+def prepare_student_upload_df(uploaded_df):
+    cleaned_df = clean_uploaded_dataframe(uploaded_df)
+    for column in EXPECTED_DATA_COLUMNS:
+        if column not in cleaned_df.columns:
+            cleaned_df[column] = pd.NA
+
+    cleaned_df = cleaned_df[EXPECTED_DATA_COLUMNS].copy()
+    for column in ["Student_ID", "Student_Name", "School_Name", "Gender", "Circuit", "Action_Zone"]:
+        cleaned_df[column] = cleaned_df[column].fillna("").astype(str).str.strip()
+        cleaned_df.loc[cleaned_df[column].isin(["nan", "None"]), column] = ""
+
+    circuit_lookup = load_circuit_lookup()
+    if circuit_lookup:
+        mapped_circuit = cleaned_df["School_Name"].map(circuit_lookup)
+        cleaned_df["Circuit"] = cleaned_df["Circuit"].mask(cleaned_df["Circuit"].eq(""), pd.NA)
+        cleaned_df["Circuit"] = cleaned_df["Circuit"].fillna(mapped_circuit).fillna("")
+
+    # Drop untouched template rows where only prefilled values remain.
+    meaningful_columns = [
+        column
+        for column in EXPECTED_DATA_COLUMNS
+        if column not in {"Student_ID", "School_Name", "Circuit"}
+    ]
+    meaningful_mask = pd.Series(False, index=cleaned_df.index)
+    for column in meaningful_columns:
+        if cleaned_df[column].dtype == "object":
+            meaningful_mask = meaningful_mask | cleaned_df[column].fillna("").astype(str).str.strip().ne("")
+        else:
+            meaningful_mask = meaningful_mask | cleaned_df[column].notna()
+    cleaned_df = cleaned_df[
+        meaningful_mask
+    ].copy()
+
+    return cleaned_df
+
+
+def write_dataframe_to_csv(df, path, columns):
+    safe_df = df.copy()
+    for column in columns:
+        if column not in safe_df.columns:
+            safe_df[column] = pd.NA
+    safe_df = safe_df[columns]
+    safe_df.to_csv(path, index=False)
+
+
+def coerce_score_series(series):
+    cleaned_series = series.fillna("").astype(str).str.strip()
+    normalized_series = cleaned_series.str.replace("%", "", regex=False)
+    numeric_series = pd.to_numeric(normalized_series, errors="coerce")
+    grade_mask = numeric_series.between(1, 9, inclusive="both")
+    numeric_series.loc[grade_mask] = numeric_series.loc[grade_mask].round().astype(int).apply(grade_to_score)
+    return numeric_series
+
+
+def build_official_alias_lookup():
+    alias_lookup = {}
+    for target_column, aliases in SUBJECT_IMPORT_ALIASES.items():
+        alias_lookup[normalize_header_text(target_column)] = target_column
+        for alias in aliases:
+            alias_lookup[normalize_header_text(alias)] = target_column
+    return alias_lookup
+
+
+def map_official_import_columns(uploaded_df):
+    alias_lookup = build_official_alias_lookup()
+    mapped_columns = {}
+    for source_column in uploaded_df.columns:
+        normalized = normalize_header_text(source_column)
+        target_column = alias_lookup.get(normalized)
+        if target_column and target_column not in mapped_columns:
+            mapped_columns[target_column] = source_column
+    return mapped_columns
+
+
+def prepare_official_results_import(uploaded_df, school, school_circuit):
+    # Flexible official result sheets are normalized into the fixed
+    # EduPulse schema here so heads can import without retyping.
+    mapped_columns = map_official_import_columns(uploaded_df)
+    required_columns = ["Student_Name"]
+    missing_required = [column for column in required_columns if column not in mapped_columns]
+    if missing_required:
+        raise ValueError(
+            "The official import file is missing the required field(s): "
+            + ", ".join(missing_required)
+            + ". Include a student name column and try again."
+        )
+
+    official_df = pd.DataFrame(index=uploaded_df.index, columns=EXPECTED_DATA_COLUMNS)
+    for column in EXPECTED_DATA_COLUMNS:
+        official_df[column] = pd.NA
+
+    for target_column, source_column in mapped_columns.items():
+        official_df[target_column] = uploaded_df[source_column]
+
+    if "Student_ID" in official_df.columns:
+        official_df["Student_ID"] = official_df["Student_ID"].fillna("").astype(str).str.strip()
+    if "Student_Name" in official_df.columns:
+        official_df["Student_Name"] = official_df["Student_Name"].fillna("").astype(str).str.strip()
+    if "Gender" in official_df.columns:
+        official_df["Gender"] = official_df["Gender"].fillna("").astype(str).str.strip()
+    official_df["School_Name"] = school
+    official_df["Circuit"] = school_circuit
+
+    subject_cols = [column for column in EXPECTED_DATA_COLUMNS if column.endswith(FINAL_SUFFIX)]
+    for subject_col in subject_cols:
+        if subject_col in mapped_columns:
+            official_df[subject_col] = coerce_score_series(uploaded_df[mapped_columns[subject_col]])
+
+    if "Attendance_Percent" in mapped_columns:
+        official_df["Attendance_Percent"] = pd.to_numeric(official_df["Attendance_Percent"], errors="coerce")
+
+    completed_df = prepare_student_upload_df(official_df)
+    if completed_df.empty:
+        raise ValueError("The official file was read, but no completed student rows were found after cleanup.")
+
+    matched_fields = sorted(mapped_columns.keys())
+    return completed_df, matched_fields
+
+
+def sync_student_upload(prepared_df, school, school_circuit, redirect_to_login=False, source_label="student CSV"):
+    # Each sync replaces only the current school's rows, keeping the
+    # rest of the municipality dataset intact for other schools.
+    data_status = get_data_file_status()
+    if data_status["ready"]:
+        existing_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+        existing_df = prepare_student_upload_df(existing_df)
+    else:
+        existing_df = pd.DataFrame(columns=EXPECTED_DATA_COLUMNS)
+
+    previous_school_rows = int(
+        existing_df["School_Name"].fillna("").astype(str).str.strip().eq(school).sum()
+    ) if "School_Name" in existing_df.columns else 0
+
+    uploaded_ids = prepared_df["Student_ID"].fillna("").astype(str).str.strip()
+    duplicate_uploaded_ids = sorted(uploaded_ids[uploaded_ids.duplicated()].unique().tolist())
+    if duplicate_uploaded_ids:
+        raise ValueError(
+            "The uploaded file contains duplicate Student_ID values. Please correct them before syncing: "
+            + ", ".join(duplicate_uploaded_ids[:10])
+            + ("..." if len(duplicate_uploaded_ids) > 10 else "")
+        )
+
+    existing_df = existing_df[
+        existing_df["School_Name"].fillna("").astype(str).str.strip() != school
+    ].copy()
+    existing_ids = set(existing_df["Student_ID"].fillna("").astype(str).str.strip().tolist())
+    conflicting_ids = sorted([student_id for student_id in uploaded_ids.tolist() if student_id in existing_ids])
+    if conflicting_ids:
+        raise ValueError(
+            "Some Student_ID values in this upload already belong to another school in the active dataset. "
+            "Download a fresh template so the IDs continue from the correct range. Conflicting IDs: "
+            + ", ".join(conflicting_ids[:10])
+            + ("..." if len(conflicting_ids) > 10 else "")
+        )
+
+    combined_df = pd.concat([existing_df, prepared_df], ignore_index=True)
+    if "Student_ID" in combined_df.columns:
+        combined_df["Student_ID"] = combined_df["Student_ID"].fillna("").astype(str).str.strip()
+        combined_df = combined_df.drop_duplicates(subset=["Student_ID"], keep="last")
+
+    write_dataframe_to_csv(combined_df, DATA_FILE, EXPECTED_DATA_COLUMNS)
+    create_notification(
+        event_type="student_bulk_sync",
+        message=(
+            f"Bulk {source_label} synced by {st.session_state.get('current_user') or f'Headteacher upload for {school}'}: "
+            f"{len(prepared_df)} student row(s) synced for {school} in {school_circuit}. "
+            f"Previous school rows: {previous_school_rows}; current school rows: {len(prepared_df)}."
+        ),
+        target_role="Director",
+        school=school,
+        circuit=school_circuit,
+        created_by=st.session_state.get("current_user", ""),
+        district=st.session_state.get("user_district", "") or get_scope_label(),
+    )
+    st.cache_data.clear()
+    if redirect_to_login:
+        st.session_state["auth_nav"] = "Login"
+        st.session_state["auth_flash_message"] = f"Student data for {school} synced successfully. You can now log in."
+        st.session_state["auth_flash_severity"] = "success"
+        st.session_state["pending_setup_role"] = ""
+    else:
+        st.session_state["portal_flash_message"] = (
+            f"✅ {source_label.title()} synced successfully for {school}. The Director dashboard now has the latest school data."
+        )
+        st.session_state["portal_flash_severity"] = "success"
+
+
+def build_school_sync_status_df(df):
+    mapping_df = load_circuit_mapping_df()
+    if mapping_df.empty:
+        status_df = pd.DataFrame(columns=["School_Name", "Circuit"])
+    else:
+        status_df = mapping_df[["School_Name", "Circuit"]].copy()
+
+    if df.empty or "School_Name" not in df.columns:
+        student_counts = pd.DataFrame(columns=["School_Name", "Students Uploaded"])
+    else:
+        student_counts = (
+            df[df["School_Name"].fillna("").astype(str).str.strip() != ""]
+            .groupby("School_Name", as_index=False)
+            .size()
+            .rename(columns={"size": "Students Uploaded"})
+        )
+
+    if status_df.empty and not student_counts.empty:
+        status_df = student_counts.copy()
+        status_df["Circuit"] = ""
+    else:
+        status_df = status_df.merge(student_counts, on="School_Name", how="outer")
+
+    if "Students Uploaded" not in status_df.columns:
+        upload_columns = [column for column in status_df.columns if str(column).startswith("Students Uploaded")]
+        if upload_columns:
+            status_df["Students Uploaded"] = (
+                status_df[upload_columns]
+                .apply(pd.to_numeric, errors="coerce")
+                .fillna(0)
+                .max(axis=1)
+            )
+            status_df = status_df.drop(columns=upload_columns)
+        else:
+            status_df["Students Uploaded"] = 0
+
+    status_df["School_Name"] = status_df["School_Name"].fillna("").astype(str).str.strip()
+    status_df["Circuit"] = status_df["Circuit"].fillna("").astype(str).str.strip()
+    status_df["Students Uploaded"] = pd.to_numeric(status_df["Students Uploaded"], errors="coerce").fillna(0).astype(int)
+    status_df = status_df[status_df["School_Name"] != ""].copy()
+    status_df["Status"] = status_df["Students Uploaded"].apply(
+        lambda count: "Synced" if count > 0 else "Awaiting Upload"
+    )
+    return status_df.sort_values(["Status", "Circuit", "School_Name"], ascending=[False, True, True]).reset_index(drop=True)
+
+
+def save_prediction_scenario(student_row, scenario_name, intervention_note, scenario_inputs, current_outcome, predicted_outcome, predicted_rows):
+    scenarios_df = load_scenarios_df()
+    scenario_record = {
+        "scenario_id": f"scenario-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{random.randint(1000, 9999)}",
+        "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "district": st.session_state.get("user_district", "") or get_scope_label(),
+        "school": str(student_row.get("School_Name", "")).strip(),
+        "circuit": str(student_row.get("Circuit", "")).strip(),
+        "student_id": str(student_row.get("Student_ID", "")).strip(),
+        "student_name": str(student_row.get("Student_Name", "")).strip(),
+        "scenario_name": str(scenario_name).strip() or "Untitled scenario",
+        "intervention_note": str(intervention_note).strip(),
+        "current_attendance": f"{scenario_inputs['current_attendance']:.1f}",
+        "target_attendance": f"{scenario_inputs['target_attendance']:.1f}",
+        "current_assignment": f"{scenario_inputs['current_assignment']:.1f}",
+        "target_assignment": f"{scenario_inputs['target_assignment']:.1f}",
+        "current_mock": f"{scenario_inputs['current_mock']:.1f}",
+        "target_mock": f"{scenario_inputs['target_mock']:.1f}",
+        "current_aggregate": f"{current_outcome['aggregate']:.1f}",
+        "predicted_aggregate": f"{predicted_outcome['aggregate']:.1f}",
+        "current_placement": current_outcome["placement_outlook"],
+        "predicted_placement": predicted_outcome["placement_outlook"],
+        "current_best_six_raw_total": f"{current_outcome['best_six_raw_total']:.1f}",
+        "predicted_best_six_raw_total": f"{predicted_outcome['best_six_raw_total']:.1f}",
+        "current_raw_average": f"{current_outcome['raw_average']:.1f}",
+        "predicted_raw_average": f"{predicted_outcome['raw_average']:.1f}",
+        "best_two_electives": predicted_outcome["best_two_subject_names"],
+        "prediction_payload_json": json.dumps(predicted_rows),
+    }
+    scenarios_df = pd.concat([scenarios_df, pd.DataFrame([scenario_record])], ignore_index=True)
+    save_scenarios_df(scenarios_df)
+
+
+def build_student_scenario_history(student_id):
+    scenarios_df = load_scenarios_df()
+    if scenarios_df.empty:
+        return scenarios_df
+
+    history_df = scenarios_df[
+        scenarios_df["student_id"].fillna("").astype(str).str.strip().eq(str(student_id).strip())
+    ].copy()
+    if history_df.empty:
+        return history_df
+
+    for column in [
+        "current_aggregate",
+        "predicted_aggregate",
+        "current_best_six_raw_total",
+        "predicted_best_six_raw_total",
+    ]:
+        history_df[column] = pd.to_numeric(history_df[column], errors="coerce")
+
+    return history_df.sort_values("created_at", ascending=False).reset_index(drop=True)
+
+
+def build_scenario_calibration_df(live_df, subject_cols):
+    scenarios_df = load_scenarios_df()
+    if scenarios_df.empty or live_df.empty or "Student_ID" not in live_df.columns:
+        return pd.DataFrame()
+
+    lookup_df = live_df.drop_duplicates(subset=["Student_ID"], keep="last").copy()
+    lookup_df["Student_ID"] = lookup_df["Student_ID"].fillna("").astype(str).str.strip()
+    calibration_rows = []
+
+    for _, scenario_row in scenarios_df.iterrows():
+        student_id = str(scenario_row.get("student_id", "")).strip()
+        live_match = lookup_df[lookup_df["Student_ID"] == student_id]
+        if live_match.empty:
+            continue
+
+        live_row = live_match.iloc[0]
+        actual_outcome = compute_student_outcome_details(live_row, subject_cols)
+        try:
+            predicted_rows = json.loads(scenario_row.get("prediction_payload_json", "[]"))
+        except json.JSONDecodeError:
+            predicted_rows = []
+
+        predicted_lookup = {
+            item.get("subject_col"): pd.to_numeric(pd.Series([item.get("Predicted Score", item.get("predicted_score"))]), errors="coerce").iloc[0]
+            for item in predicted_rows
+        }
+        absolute_errors = []
+        for subject_col in subject_cols:
+            predicted_score = predicted_lookup.get(subject_col)
+            actual_score = pd.to_numeric(pd.Series([live_row.get(subject_col)]), errors="coerce").iloc[0]
+            if pd.isna(predicted_score) or pd.isna(actual_score):
+                continue
+            absolute_errors.append(abs(float(predicted_score) - float(actual_score)))
+
+        calibration_rows.append(
+            {
+                "Scenario": scenario_row.get("scenario_name", ""),
+                "Student_ID": student_id,
+                "Student_Name": scenario_row.get("student_name", ""),
+                "School_Name": scenario_row.get("school", ""),
+                "Saved At": scenario_row.get("created_at", ""),
+                "Predicted Aggregate": pd.to_numeric(pd.Series([scenario_row.get("predicted_aggregate")]), errors="coerce").iloc[0],
+                "Actual Aggregate": actual_outcome["aggregate"],
+                "Predicted Placement": scenario_row.get("predicted_placement", ""),
+                "Actual Placement": actual_outcome["placement_outlook"],
+                "MAE (Subjects)": round(float(np.mean(absolute_errors)), 2) if absolute_errors else np.nan,
+                "Best 2 Electives": scenario_row.get("best_two_electives", ""),
+            }
+        )
+
+    if not calibration_rows:
+        return pd.DataFrame()
+    return pd.DataFrame(calibration_rows).sort_values("Saved At", ascending=False).reset_index(drop=True)
+
+
+def generate_intervention_recommendations(predicted_rows, current_attendance, target_attendance, target_assignment, target_mock):
+    recommendations = []
+    weak_subjects = [row["Subject"] for row in predicted_rows if row["Predicted Score"] < 45][:3]
+    if target_attendance - current_attendance >= 5:
+        recommendations.append("Sustain the attendance plan with weekly follow-up and early morning check-ins.")
+    if target_assignment >= 60:
+        recommendations.append("Protect assignment completion with a daily homework review slot and marking feedback.")
+    if target_mock >= 60:
+        recommendations.append("Increase mock readiness with targeted revision drills and timed practice papers.")
+    if weak_subjects:
+        recommendations.append("Prioritize extra support in: " + ", ".join(weak_subjects) + ".")
+    if not recommendations:
+        recommendations.append("Keep current routines stable and review one weak subject every week.")
+    return recommendations
+
+
+def build_student_counselling_sheet_pdf(student_row, scenario_name, intervention_note, current_outcome, predicted_outcome, predicted_rows, recommendations):
+    buffer = io.BytesIO()
+    student_name = str(student_row.get("Student_Name", "")).strip()
+    school_name = str(student_row.get("School_Name", "")).strip()
+    circuit_name = str(student_row.get("Circuit", "")).strip()
+
+    with PdfPages(buffer) as pdf:
+        fig, ax = plt.subplots(figsize=(11.69, 8.27))
+        ax.axis("off")
+        body_lines = [
+            APP_TITLE,
+            "",
+            f"Placement Counselling Sheet: {student_name}",
+            f"Student ID: {student_row.get('Student_ID', '')}",
+            f"School: {school_name}",
+            f"Circuit: {circuit_name}",
+            f"Scenario: {scenario_name or 'Saved scenario'}",
+            "",
+            f"Current Aggregate: {current_outcome['aggregate']:.1f}",
+            f"Predicted Aggregate: {predicted_outcome['aggregate']:.1f}",
+            f"Current Placement: {current_outcome['placement_outlook']}",
+            f"Predicted Placement: {predicted_outcome['placement_outlook']}",
+            f"Best Two Electives: {predicted_outcome['best_two_subject_names']}",
+            f"Best Six Raw Total: {predicted_outcome['best_six_raw_total']:.1f}",
+            "",
+            "Recommended interventions:",
+        ]
+        body_lines.extend([f"• {recommendation}" for recommendation in recommendations])
+        if intervention_note.strip():
+            body_lines.extend(["", "Intervention note:", intervention_note.strip()])
+        body_lines.extend(["", BLOOMCORE_FOOTER_TEXT])
+        ax.text(0.03, 0.97, "\n".join(body_lines), va="top", ha="left", fontsize=11, family="monospace")
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        subject_table = pd.DataFrame(predicted_rows)[
+            ["Subject", "Current Score", "Predicted Score", "Predicted Grade", "Risk Flag"]
+        ]
+        fig, ax = plt.subplots(figsize=(11.69, 8.27))
+        ax.axis("off")
+        ax.set_title("Subject Forecast Summary", loc="left", fontsize=14, fontweight="bold")
+        table = ax.table(
+            cellText=subject_table.values,
+            colLabels=subject_table.columns,
+            cellLoc="left",
+            loc="center",
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1, 1.5)
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+# ============================================================
+# 10. DATA SETUP, UPLOAD UX, REPORTS, AND COMMUNICATION TOOLS
+# ============================================================
+def render_circuit_setup(title, description, key_prefix, redirect_to_login=False):
+    st.markdown(f"### {title}")
+    st.write(description)
+
+    left_col, right_col = st.columns([1, 1])
+    with left_col:
+        st.download_button(
+            "Download Circuits Template",
+            build_template_csv_bytes(EXPECTED_CIRCUIT_COLUMNS),
+            file_name="edupulse_circuits_template.csv",
+            mime="text/csv",
+            key=f"{key_prefix}_download",
+            use_container_width=True,
+        )
+        st.caption("Use the fixed `School_Name` and `Circuit` headers exactly as downloaded.")
+
+    with right_col:
+        uploaded_file = st.file_uploader(
+            "Upload completed circuits CSV",
+            type=["csv"],
+            key=f"{key_prefix}_upload",
+        )
+
+    with st.expander("Preview the required circuits columns"):
+        st.dataframe(pd.DataFrame({"Required Columns": EXPECTED_CIRCUIT_COLUMNS}), use_container_width=True)
+
+    if uploaded_file is None:
+        render_scroll_to_top()
+        return
+
+    try:
+        _, uploaded_df = read_uploaded_csv(uploaded_file, dtype=str)
+    except Exception as exc:
+        st.error(f"The uploaded circuits CSV could not be read: {exc}")
+        render_scroll_to_top()
+        return
+
+    columns_valid, column_message = validate_circuit_columns(uploaded_df.columns.tolist())
+    if not columns_valid:
+        st.error(column_message)
+        render_scroll_to_top()
+        return
+
+    if uploaded_df.empty:
+        st.warning("The uploaded circuits CSV has the correct headers, but it does not contain any school rows yet.")
+        render_scroll_to_top()
+        return
+
+    cleaned_df = uploaded_df[EXPECTED_CIRCUIT_COLUMNS].copy()
+    cleaned_df["School_Name"] = cleaned_df["School_Name"].fillna("").astype(str).str.strip()
+    cleaned_df["Circuit"] = cleaned_df["Circuit"].fillna("").astype(str).str.strip()
+    cleaned_df = cleaned_df[(cleaned_df["School_Name"] != "") & (cleaned_df["Circuit"] != "")]
+
+    if cleaned_df.empty:
+        st.warning("Every uploaded circuits row was blank after cleanup. Please add school and circuit values first.")
+        render_scroll_to_top()
+        return
+
+    st.success("Circuits template validation passed.")
+    detected_circuits = combine_known_circuits(cleaned_df["Circuit"])
+    st.write(f"Detected rows: {len(cleaned_df)} | Circuits: {len(detected_circuits)}")
+    st.dataframe(cleaned_df.head(12), use_container_width=True)
+
+    if st.button("Replace Active Circuits Dataset", type="primary", key=f"{key_prefix}_replace"):
+        write_dataframe_to_csv(cleaned_df, CIRCUITS_FILE, EXPECTED_CIRCUIT_COLUMNS)
+        st.cache_data.clear()
+        if redirect_to_login:
+            st.session_state["auth_nav"] = "Login"
+            st.session_state["auth_flash_message"] = "The active circuits dataset was replaced successfully. You can now log in."
+            st.session_state["auth_flash_severity"] = "success"
+            st.session_state["pending_setup_role"] = ""
+        else:
+            st.success("The active circuits dataset was replaced successfully.")
+        st.rerun()
+
+    render_scroll_to_top()
+
+
+def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
+    # This upload workspace supports both the standard EduPulse template
+    # and a more flexible official-results import path for school heads.
+    st.markdown("### 📥 Headteacher Student CSV Upload")
+    school = str(school).strip()
+    school_circuit = load_circuit_lookup().get(school, "")
+    st.write(
+        f"Download the official student-data template, fill in the rows for {school}, and upload it here. The data will sync into the active District/Municipal dataset for the Director to see."
+    )
+    st.caption(
+        "Attendance_Percent can be entered as (days present / total school days) × 100. If you leave it blank, EduPulse will auto-fill it using the best available school average, district average, or a default baseline."
+    )
+    st.markdown(
+        """
+        <div class="mobile-sync-card">
+            <div class="mobile-sync-title">📱 Mobile Quick Sync</div>
+            <p class="mobile-sync-copy">
+                On phones, use the school template when you want a guided entry sheet, or use the official-result import tab if you already have a CSV export from WAEC or another results source.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.expander("How to work out Attendance_Percent"):
+        st.write("Formula: `(Days Present / Total School Days) x 100`")
+        st.write("Example: if a student attended 142 out of 150 school days, attendance is 94.7%.")
+        st.write("If you do not have the attendance figure ready, leave the field blank and EduPulse will fill it during sync.")
+
+    template_tab, official_tab = st.tabs(["📄 Template Sync", "🏛️ Official Result Import"])
+
+    with template_tab:
+        left_col, right_col = st.columns([1, 1])
+        with left_col:
+            student_id_prefix = build_school_student_id_prefix(school)
+            next_number = get_next_school_student_id_number(school, student_id_prefix)
+            st.download_button(
+                "Download Student Template",
+                build_headteacher_student_template_bytes(school, school_circuit),
+                file_name=f"edupulse_{school.lower().replace(' ', '_')}_student_data_template.csv",
+                mime="text/csv",
+                key=f"{key_prefix}_download_csv",
+                use_container_width=True,
+            )
+            if school_circuit:
+                st.caption(
+                    f"The template is prefilled with School_Name = {school}, Circuit = {school_circuit}, and Student_ID values starting from {student_id_prefix}-{next_number:04d}. If you add extra completed rows later without IDs, EduPulse will continue the same school-specific ID sequence during sync."
+                )
+            else:
+                st.caption(
+                    f"The template is prefilled with School_Name = {school} and Student_ID values starting from {student_id_prefix}-{next_number:04d}. Ask the Director to map this school to a circuit before syncing student rows."
+                )
+
+        with right_col:
+            uploaded_file = st.file_uploader(
+                "Upload completed student-data template",
+                type=["csv"],
+                key=f"{key_prefix}_upload",
+            )
+
+        with st.expander("Preview the required student-data columns"):
+            st.dataframe(pd.DataFrame({"Required Columns": EXPECTED_DATA_COLUMNS}), use_container_width=True, height=320)
+
+        if uploaded_file is not None:
+            try:
+                _, uploaded_df = read_uploaded_csv(uploaded_file, dtype={"Student_ID": str})
+                columns_valid, column_message = validate_data_columns(uploaded_df.columns.tolist())
+                if not columns_valid:
+                    st.error(column_message)
+                elif uploaded_df.empty:
+                    st.warning("The uploaded student-data CSV has the correct headers, but it does not contain any student rows yet.")
+                elif not school_circuit:
+                    st.error("This school is not yet mapped to a circuit. Ask the Director to update the circuits CSV before syncing student data.")
+                else:
+                    prepared_df = prepare_student_upload_df(uploaded_df)
+                    if prepared_df.empty:
+                        st.warning("The uploaded student-data CSV does not contain any completed student rows yet.")
+                    else:
+                        non_blank_school_values = prepared_df["School_Name"][prepared_df["School_Name"] != ""].unique().tolist()
+                        if non_blank_school_values and any(value != school for value in non_blank_school_values):
+                            st.error("This upload contains rows for a different school. Headteacher uploads must contain only the registered school.")
+                        else:
+                            prepared_df["School_Name"] = school
+                            prepared_df["Circuit"] = school_circuit
+                            missing_name_rows = int(prepared_df["Student_Name"].fillna("").astype(str).str.strip().eq("").sum())
+                            if missing_name_rows > 0:
+                                st.error(f"Every uploaded student row must include Student_Name. {missing_name_rows} row(s) are missing Student_Name.")
+                            else:
+                                data_status = get_data_file_status()
+                                if data_status["ready"]:
+                                    existing_school_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+                                    existing_school_df = prepare_student_upload_df(existing_school_df)
+                                    existing_school_df = existing_school_df[
+                                        existing_school_df["School_Name"].fillna("").astype(str).str.strip() == school
+                                    ].copy()
+                                    existing_all_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+                                    existing_all_df = prepare_student_upload_df(existing_all_df)
+                                else:
+                                    existing_school_df = pd.DataFrame(columns=EXPECTED_DATA_COLUMNS)
+                                    existing_all_df = pd.DataFrame(columns=EXPECTED_DATA_COLUMNS)
+
+                                prepared_df, auto_assigned_count = assign_missing_school_student_ids(prepared_df, school, existing_school_df)
+                                prepared_df, auto_filled_attendance_count, attendance_fill_value = autofill_missing_attendance(
+                                    prepared_df,
+                                    existing_school_df=existing_school_df,
+                                    existing_all_df=existing_all_df,
+                                )
+
+                                st.success("Student-data template validation passed.")
+                                status_message = f"Detected rows for {school}: {len(prepared_df)} | Circuit: {school_circuit}"
+                                if auto_assigned_count > 0:
+                                    status_message += f" | Auto-assigned Student_IDs: {auto_assigned_count}"
+                                if auto_filled_attendance_count > 0 and attendance_fill_value is not None:
+                                    status_message += f" | Auto-filled Attendance rows: {auto_filled_attendance_count} at {attendance_fill_value:.1f}%"
+                                st.write(status_message)
+                                preview_cols = [column for column in ["Student_ID", "Student_Name", "Gender", "School_Name", "Circuit"] if column in prepared_df.columns]
+                                st.dataframe(prepared_df[preview_cols].head(10), use_container_width=True)
+
+                                if st.button("Sync Student Data to Director Dashboard", type="primary", key=f"{key_prefix}_sync"):
+                                    try:
+                                        sync_student_upload(
+                                            prepared_df,
+                                            school,
+                                            school_circuit,
+                                            redirect_to_login=redirect_to_login,
+                                            source_label="student CSV",
+                                        )
+                                        st.rerun()
+                                    except ValueError as exc:
+                                        st.error(str(exc))
+            except Exception as exc:
+                st.error(f"The uploaded student-data CSV could not be processed: {exc}")
+
+    with official_tab:
+        st.write("Use this when you already have a CSV export of official results and do not want to retype students into the standard template.")
+        st.caption("EduPulse will match common result-sheet headers like Student Name, Index Number, Mathematics, English Language, Integrated Science, and Social Studies.")
+        with st.expander("Accepted official-result fields"):
+            alias_rows = [
+                {"EduPulse Field": field, "Accepted Examples": ", ".join(aliases[:4])}
+                for field, aliases in SUBJECT_IMPORT_ALIASES.items()
+            ]
+            st.dataframe(pd.DataFrame(alias_rows), use_container_width=True)
+
+        official_file = st.file_uploader(
+            "Upload official result CSV",
+            type=["csv"],
+            key=f"{key_prefix}_official_upload",
+        )
+
+        if official_file is not None:
+            if not school_circuit:
+                st.error("This school is not yet mapped to a circuit. Ask the Director to update the circuits CSV before importing official results.")
+            else:
+                try:
+                    _, official_df = read_uploaded_csv(official_file, dtype={"Student_ID": str})
+                    prepared_official_df, matched_fields = prepare_official_results_import(official_df, school, school_circuit)
+
+                    data_status = get_data_file_status()
+                    if data_status["ready"]:
+                        existing_school_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+                        existing_school_df = prepare_student_upload_df(existing_school_df)
+                        existing_school_df = existing_school_df[
+                            existing_school_df["School_Name"].fillna("").astype(str).str.strip() == school
+                        ].copy()
+                        existing_all_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+                        existing_all_df = prepare_student_upload_df(existing_all_df)
+                    else:
+                        existing_school_df = pd.DataFrame(columns=EXPECTED_DATA_COLUMNS)
+                        existing_all_df = pd.DataFrame(columns=EXPECTED_DATA_COLUMNS)
+
+                    prepared_official_df, auto_assigned_count = assign_missing_school_student_ids(
+                        prepared_official_df,
+                        school,
+                        existing_school_df,
+                    )
+                    prepared_official_df, auto_filled_attendance_count, attendance_fill_value = autofill_missing_attendance(
+                        prepared_official_df,
+                        existing_school_df=existing_school_df,
+                        existing_all_df=existing_all_df,
+                    )
+
+                    st.success("Official result import mapped successfully.")
+                    st.write(
+                        f"Matched fields: {', '.join(matched_fields)}"
+                        + (f" | Auto-assigned Student_IDs: {auto_assigned_count}" if auto_assigned_count else "")
+                        + (
+                            f" | Auto-filled Attendance rows: {auto_filled_attendance_count} at {attendance_fill_value:.1f}%"
+                            if auto_filled_attendance_count and attendance_fill_value is not None
+                            else ""
+                        )
+                    )
+                    preview_cols = [column for column in ["Student_ID", "Student_Name", "Gender", "School_Name", "Circuit"] if column in prepared_official_df.columns]
+                    st.dataframe(prepared_official_df[preview_cols].head(10), use_container_width=True)
+
+                    if st.button("Sync Official Results to Director Dashboard", type="primary", key=f"{key_prefix}_official_sync"):
+                        try:
+                            sync_student_upload(
+                                prepared_official_df,
+                                school,
+                                school_circuit,
+                                redirect_to_login=redirect_to_login,
+                                source_label="official results import",
+                            )
+                            st.rerun()
+                        except ValueError as exc:
+                            st.error(str(exc))
+                except Exception as exc:
+                    st.error(f"The official result CSV could not be processed: {exc}")
+
+    render_scroll_to_top()
+
+
+def render_director_data_setup(data_status, standalone=False, key_prefix="director_data_setup"):
+    scope_label = get_scope_label()
+    active_config = load_app_config()
+    circuit_status = get_circuit_file_status()
+    current_df, _ = load_data(show_errors=False) if data_status["ready"] else (pd.DataFrame(), [])
+    school_sync_df = build_school_sync_status_df(current_df)
+    if standalone:
+        st.title("🗂️ Director Data Setup")
+        st.write(
+            f"Before EduPulse can open the analytics workspace for {scope_label}, the Director should upload the official circuits CSV. Headteachers will then download school-specific student templates and sync their own school data."
+        )
+    else:
+        st.markdown("### 🗂️ Data Setup & Replacement")
+        st.write(
+            f"Directors manage only the circuits map for {scope_label}. Headteachers handle student-data uploads for their own schools."
+        )
+
+    render_status_message(circuit_status)
+    if data_status["ready"]:
+        render_status_message(data_status)
+    else:
+        st.info("Student uploads will begin appearing here as Headteachers sync their school CSV files.")
+    if active_config["headteacher_security_key"]:
+        st.info(
+            f"Headteacher registration key for {active_config['district_name'] or scope_label}: {active_config['headteacher_security_key']}"
+        )
+
+    render_circuit_setup(
+        title="🗺️ Circuits CSV Setup",
+        description="Download the official circuits template, fill each school with its circuit, and upload it to replace the sample circuits dataset.",
+        key_prefix=f"{key_prefix}_circuits",
+    )
+
+    st.markdown("---")
+    st.markdown("### 🏫 Headteacher Upload Coverage")
+    st.write("Each school appears below with its current sync status. Schools that have not uploaded yet remain at zero until their Headteacher syncs the student CSV.")
+    if school_sync_df.empty:
+        st.warning("No schools are available yet. Upload the circuits CSV first to begin school onboarding.")
+    else:
+        coverage_cols = st.columns(3)
+        with coverage_cols[0]:
+            st.metric("Mapped Schools", len(school_sync_df))
+        with coverage_cols[1]:
+            st.metric("Schools Synced", int((school_sync_df["Students Uploaded"] > 0).sum()))
+        with coverage_cols[2]:
+            st.metric("Awaiting Upload", int((school_sync_df["Students Uploaded"] == 0).sum()))
+        st.dataframe(school_sync_df, use_container_width=True)
+
+    render_scroll_to_top()
+
+
+def render_data_waiting_screen(data_status):
+    scope_label = get_scope_label()
+    st.title("🕒 Waiting for School Data Sync")
+    st.write(
+        f"The analytics workspace for {scope_label} cannot open yet for this Headteacher account. Upload the school CSV first so the dashboard can open with your school's student records."
+    )
+    render_status_message(data_status)
+    render_scroll_to_top()
+
+
+def render_circuit_waiting_screen(status):
+    scope_label = get_scope_label()
+    st.title("🗺️ Waiting for Circuits Setup")
+    st.write(
+        f"The circuits map for {scope_label} is not ready yet. Ask the Director to upload the official circuits CSV before Headteacher onboarding can continue."
+    )
+    render_status_message(status)
+    render_scroll_to_top()
+
+
+def ordinal_rank(position):
+    if 10 <= position % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(position % 10, "th")
+    return f"{position}{suffix}"
+
+
+def build_scope_report_tables(scope_df, subject_cols, scope_label, school_sync_df=None):
+    agg_df = build_aggregate_dataframe(scope_df, subject_cols)
+    tables = {}
+
+    summary_rows = [
+        {"Metric": "Scope", "Value": scope_label},
+        {"Metric": "Students", "Value": int(len(scope_df))},
+        {"Metric": "Schools", "Value": int(scope_df["School_Name"].nunique()) if "School_Name" in scope_df.columns else 0},
+        {"Metric": "Circuits", "Value": int(scope_df["Circuit"].nunique()) if "Circuit" in scope_df.columns else 0},
+        {"Metric": "Average Aggregate", "Value": round(float(agg_df["Aggregate"].mean()), 2) if not agg_df.empty else np.nan},
+        {"Metric": "Pass Rate %", "Value": round(float(agg_df["Passed"].mean() * 100), 2) if not agg_df.empty else np.nan},
+    ]
+    tables["summary_metrics"] = pd.DataFrame(summary_rows)
+
+    if not agg_df.empty:
+        tables["student_placement_summary"] = agg_df.sort_values(["Aggregate", "Student_Name"], ascending=[True, True]).reset_index(drop=True)
+        tables["school_placement_summary"] = (
+            agg_df.groupby(["School_Name", "Placement_Category"]).size().unstack(fill_value=0).reset_index()
+        )
+        tables["circuit_placement_summary"] = (
+            agg_df.groupby(["Circuit", "Placement_Category"]).size().unstack(fill_value=0).reset_index()
+        )
+    else:
+        tables["student_placement_summary"] = pd.DataFrame()
+        tables["school_placement_summary"] = pd.DataFrame()
+        tables["circuit_placement_summary"] = pd.DataFrame()
+
+    if scope_df.empty:
+        tables["subject_summary"] = pd.DataFrame(columns=["Subject", "Average Score"])
+    else:
+        tables["subject_summary"] = pd.DataFrame(
+            {
+                "Subject": [format_subject_name(subject) for subject in subject_cols],
+                "Average Score": [round(float(pd.to_numeric(scope_df[subject], errors="coerce").mean()), 2) for subject in subject_cols],
+            }
+        ).sort_values("Average Score", ascending=True)
+
+    if not scope_df.empty and subject_cols and "School_Name" in scope_df.columns:
+        school_rankings = (
+            scope_df.groupby("School_Name")[subject_cols]
+            .mean()
+            .mean(axis=1)
+            .reset_index(name="Actual BECE Average")
+            .sort_values(["Actual BECE Average", "School_Name"], ascending=[False, True])
+            .reset_index(drop=True)
+        )
+        school_rankings["Position"] = school_rankings.index + 1
+        tables["school_rankings"] = school_rankings[
+            ["Position", "School_Name", "Actual BECE Average"]
+        ].copy()
+        tables["school_rankings"]["Actual BECE Average"] = tables["school_rankings"]["Actual BECE Average"].round(2)
+    else:
+        tables["school_rankings"] = pd.DataFrame(columns=["Position", "School_Name", "Actual BECE Average"])
+
+    if not agg_df.empty and "Gender" in agg_df.columns:
+        gender_summary = (
+            agg_df[agg_df["Gender"] != "Unspecified"]
+            .groupby("Gender", as_index=False)
+            .agg(
+                Average_Aggregate=("Aggregate", "mean"),
+                Average_Best_Six_Raw_Total=("Best_Six_Raw_Total", "mean"),
+            )
+        )
+        gender_summary["Average_Aggregate"] = gender_summary["Average_Aggregate"].round(2)
+        gender_summary["Average_Best_Six_Raw_Total"] = gender_summary["Average_Best_Six_Raw_Total"].round(2)
+        if not scope_df.empty and subject_cols:
+            gender_raw = (
+                pd.concat(
+                    [
+                        scope_df[["Gender"]].rename(columns={"Gender": "Gender"}),
+                        scope_df[subject_cols].mean(axis=1).rename("Average_Subject_Score"),
+                    ],
+                    axis=1,
+                )
+                .assign(Gender=lambda df_: df_["Gender"].apply(normalize_gender))
+            )
+            gender_raw = gender_raw[gender_raw["Gender"] != "Unspecified"]
+            gender_subject_summary = gender_raw.groupby("Gender", as_index=False)["Average_Subject_Score"].mean()
+            gender_summary = gender_summary.merge(gender_subject_summary, on="Gender", how="left")
+            gender_summary["Average_Subject_Score"] = gender_summary["Average_Subject_Score"].round(2)
+        tables["gender_summary"] = gender_summary
+    else:
+        tables["gender_summary"] = pd.DataFrame(columns=["Gender", "Average_Aggregate", "Average_Best_Six_Raw_Total", "Average_Subject_Score"])
+
+    tables["audit_export"] = scope_df.drop(columns=["Search_Label"], errors="ignore").copy()
+
+    if school_sync_df is not None:
+        tables["school_sync_coverage"] = school_sync_df.copy()
+
+    return tables
+
+
+def build_briefing_zip_bytes(scope_df, subject_cols, scope_label, school_sync_df=None):
+    tables = build_scope_report_tables(scope_df, subject_cols, scope_label, school_sync_df=school_sync_df)
+    buffer = io.BytesIO()
+    slug = slugify_name(scope_label).lower() or "edupulse"
+
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_handle:
+        for table_name, table_df in tables.items():
+            csv_bytes = table_df.to_csv(index=False).encode("utf-8")
+            zip_handle.writestr(f"{slug}_{table_name}.csv", csv_bytes)
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def build_briefing_pdf_bytes(scope_df, subject_cols, scope_label, school_sync_df=None):
+    tables = build_scope_report_tables(scope_df, subject_cols, scope_label, school_sync_df=school_sync_df)
+    agg_df = build_aggregate_dataframe(scope_df, subject_cols)
+    buffer = io.BytesIO()
+    downloaded_at = datetime.now().strftime("%d %B %Y, %H:%M")
+    report_year = datetime.now().year
+    school_rankings = tables.get("school_rankings", pd.DataFrame())
+    gender_summary = tables.get("gender_summary", pd.DataFrame())
+    calibration_map = get_live_calibration_map()
+
+    def add_page_footer(ax):
+        ax.text(0.02, 0.03, f"Downloaded: {downloaded_at}", fontsize=8.5, color="#475569", transform=ax.transAxes)
+        ax.text(0.98, 0.03, BLOOMCORE_FOOTER_TEXT, fontsize=8.5, color="#0f172a", ha="right", transform=ax.transAxes)
+
+    def add_header(ax, title, insight):
+        ax.text(0.03, 0.94, title, fontsize=16, fontweight="bold", color="#0f172a", transform=ax.transAxes)
+        ax.text(0.03, 0.89, insight, fontsize=10.5, color="#334155", style="italic", transform=ax.transAxes)
+
+    with PdfPages(buffer) as pdf:
+        fig, ax = plt.subplots(figsize=(11.69, 8.27))
+        ax.axis("off")
+        ax.text(0.5, 0.84, "GHANA EDUCATION SERVICE", ha="center", fontsize=20, fontweight="bold", color="#0f172a", transform=ax.transAxes)
+        ax.text(0.5, 0.77, f"{scope_label} District Directorate", ha="center", fontsize=14, color="#1d4ed8", transform=ax.transAxes)
+        ax.text(
+            0.5,
+            0.62,
+            f"STRATEGIC BECE PERFORMANCE BRIEFING: {report_year} TRANSITION ANALYSIS",
+            ha="center",
+            fontsize=22,
+            fontweight="bold",
+            color="#0f172a",
+            wrap=True,
+            transform=ax.transAxes,
+        )
+        ax.text(
+            0.5,
+            0.48,
+            "Data-Driven Insights for Academic Excellence and Resource Allocation",
+            ha="center",
+            fontsize=13,
+            color="#475569",
+            style="italic",
+            transform=ax.transAxes,
+        )
+        ax.text(
+            0.5,
+            0.26,
+            "Prepared from live district data, calibrated school-level forecasting, and BECE transition intelligence.",
+            ha="center",
+            fontsize=11,
+            color="#334155",
+            transform=ax.transAxes,
+        )
+        add_page_footer(ax)
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(11.69, 8.27))
+        ax.axis("off")
+        add_header(
+            ax,
+            "DISTRICT PERFORMANCE AT A GLANCE: KEY INDICATORS",
+            "Key takeaway: the district pulse combines student volume, aggregate quality, pass-rate movement, and raw-score competitiveness.",
+        )
+        summary_table = tables["summary_metrics"].copy()
+        top_school = school_rankings.iloc[0]["School_Name"] if not school_rankings.empty else "Awaiting data"
+        top_school_average = school_rankings.iloc[0]["Actual BECE Average"] if not school_rankings.empty else np.nan
+        extra_metrics = pd.DataFrame(
+            [
+                {"Metric": "Top Ranked School", "Value": top_school},
+                {"Metric": "Top School Actual BECE Average", "Value": round(float(top_school_average), 2) if pd.notna(top_school_average) else np.nan},
+                {"Metric": "Category A Tie-Break Rule", "Value": "Best 6 raw score used for edge-case competitiveness"},
+            ]
+        )
+        summary_table = pd.concat([summary_table, extra_metrics], ignore_index=True)
+        summary_render = ax.table(
+            cellText=summary_table.values,
+            colLabels=summary_table.columns,
+            cellLoc="left",
+            bbox=[0.03, 0.18, 0.94, 0.6],
+        )
+        summary_render.auto_set_font_size(False)
+        summary_render.set_fontsize(10)
+        summary_render.scale(1, 1.5)
+        add_page_footer(ax)
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(11.69, 8.27))
+        ax.axis("off")
+        add_header(
+            ax,
+            "SCHOOL RANKING: ACTUAL BECE AVERAGE PERFORMANCE",
+            "Key takeaway: ranking by actual BECE average reveals where strong instruction is already happening and where peer-learning support should begin.",
+        )
+        ranking_table = school_rankings.copy()
+        if not ranking_table.empty:
+            ranking_table["Rank"] = ranking_table["Position"].apply(lambda value: ordinal_rank(int(value)))
+            ranking_table = ranking_table[["Rank", "School_Name", "Actual BECE Average"]]
+            render_table = ax.table(
+                cellText=ranking_table.values,
+                colLabels=["Position", "School", "Actual BECE Average"],
+                cellLoc="left",
+                bbox=[0.03, 0.12, 0.94, 0.72],
+            )
+            render_table.auto_set_font_size(False)
+            render_table.set_fontsize(9)
+            render_table.scale(1, 1.4)
+        else:
+            ax.text(0.03, 0.7, "No school ranking data is available yet.", fontsize=12, color="#475569", transform=ax.transAxes)
+        add_page_footer(ax)
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        subject_summary = tables["subject_summary"].dropna()
+        fig, ax = plt.subplots(figsize=(11.69, 8.27))
+        if subject_summary.empty:
+            ax.axis("off")
+            add_header(
+                ax,
+                "CURRICULUM STRENGTHS & CRITICAL LEARNING GAPS",
+                "Key takeaway: subject-level averages highlight where curriculum support, teacher coaching, and materials should be concentrated first.",
+            )
+            ax.text(0.03, 0.7, "No subject-performance data is available yet.", fontsize=12, color="#475569", transform=ax.transAxes)
+        else:
+            top_subject = subject_summary.sort_values("Average Score", ascending=False).iloc[0]
+            weak_subject = subject_summary.sort_values("Average Score", ascending=True).iloc[0]
+            ax.barh(subject_summary["Subject"], subject_summary["Average Score"], color="#2563eb")
+            ax.set_title("CURRICULUM STRENGTHS & CRITICAL LEARNING GAPS", loc="left", fontsize=16, fontweight="bold")
+            ax.text(
+                0.0,
+                1.02,
+                f"Key takeaway: {top_subject['Subject']} is the strongest district subject, while {weak_subject['Subject']} needs the fastest learning recovery response.",
+                fontsize=10.5,
+                color="#334155",
+                style="italic",
+                transform=ax.transAxes,
+            )
+            ax.set_xlabel("Average Score")
+            ax.grid(axis="x", linestyle="--", alpha=0.3)
+        add_page_footer(ax)
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(11.69, 8.27))
+        placement_summary = agg_df["Placement_Category"].value_counts().reindex(PLACEMENT_ORDER, fill_value=0) if not agg_df.empty else pd.Series(dtype=float)
+        ax_left.bar(placement_summary.index, placement_summary.values, color=["#1d4ed8", "#16a34a", "#f59e0b", "#dc2626"])
+        ax_left.set_title("SENIOR HIGH SCHOOL (SHS) TRANSITION & PLACEMENT OUTLOOK", loc="left", fontsize=14, fontweight="bold")
+        ax_left.text(
+            0.0,
+            1.02,
+            "Key takeaway: placement outlook should be read together with raw-score tie-break strength for Category A edge cases.",
+            fontsize=10,
+            color="#334155",
+            style="italic",
+            transform=ax_left.transAxes,
+        )
+        ax_left.set_ylabel("Student Count")
+
+        if gender_summary.empty:
+            ax_right.axis("off")
+            ax_right.text(0.05, 0.85, "Girls/Boys comparison is not available yet.", fontsize=12, color="#475569", transform=ax_right.transAxes)
+        else:
+            ax_right.bar(gender_summary["Gender"], gender_summary["Average_Subject_Score"].fillna(0), color=["#e11d48", "#2563eb"])
+            ax_right.set_title("GIRLS VS BOYS: AVERAGE ACTUAL PERFORMANCE", loc="left", fontsize=14, fontweight="bold")
+            ax_right.text(
+                0.0,
+                1.02,
+                "Key takeaway: gender parity monitoring helps the Directorate target support where performance gaps are emerging.",
+                fontsize=10,
+                color="#334155",
+                style="italic",
+                transform=ax_right.transAxes,
+            )
+            ax_right.set_ylabel("Average Subject Score")
+        fig.text(0.02, 0.03, f"Downloaded: {downloaded_at}", fontsize=8.5, color="#475569")
+        fig.text(0.98, 0.03, BLOOMCORE_FOOTER_TEXT, fontsize=8.5, color="#0f172a", ha="right")
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(11.69, 8.27))
+        ax.axis("off")
+        add_header(
+            ax,
+            "TARGETED INTERVENTION PRIORITY LIST: STUDENTS REQUIRING URGENT SUPPORT",
+            "Key takeaway: this list converts risk into action by identifying the students who need the fastest instructional and pastoral response.",
+        )
+        if not agg_df.empty:
+            risk_df = agg_df.sort_values(["Aggregate", "Best_Six_Raw_Total"], ascending=[False, True]).head(15).copy()
+            risk_df = risk_df[["Student_Name", "School_Name", "Aggregate", "Best_Six_Raw_Total", "Placement_Category"]]
+            risk_df.columns = ["Student", "School", "Aggregate", "Best 6 Raw Total", "Placement"]
+            risk_table = ax.table(
+                cellText=risk_df.values,
+                colLabels=risk_df.columns,
+                cellLoc="left",
+                bbox=[0.03, 0.12, 0.94, 0.72],
+            )
+            risk_table.auto_set_font_size(False)
+            risk_table.set_fontsize(9)
+            risk_table.scale(1, 1.4)
+        else:
+            ax.text(0.03, 0.7, "No intervention list is available yet.", fontsize=12, color="#475569", transform=ax.transAxes)
+        add_page_footer(ax)
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(11.69, 8.27))
+        ax.axis("off")
+        add_header(
+            ax,
+            "METHODOLOGY: PREDICTIVE ANALYTICS BY BLOOMCORE TECHNOLOGIES",
+            "Key takeaway: the forecasting engine blends pretrained subject models, 30/70 BECE weighting logic, raw-score tie-break context, and school-bias calibration.",
+        )
+        methodology_lines = [
+            "1. Subject-specific machine-learning models are loaded from bece_models.joblib.",
+            "2. Continuous Assessment (30%) and external-exam proxy logic (70%) remain visible in the forecast tables.",
+            "3. Category A predictions include a raw-score tie-break strength signal for competitive edge cases.",
+            f"4. Historical school calibration map loaded: {'Yes' if calibration_map else 'No'}",
+            "5. School calibration adjusts predictions where mock marking is historically stricter or easier than final BECE outcomes.",
+            "6. Best-two electives are selected dynamically using grade first and raw score as the tie-breaker.",
+        ]
+        ax.text(
+            0.03,
+            0.82,
+            "\n\n".join(textwrap.fill(line, width=90) for line in methodology_lines),
+            va="top",
+            ha="left",
+            fontsize=11,
+            color="#0f172a",
+            transform=ax.transAxes,
+        )
+        add_page_footer(ax)
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def send_email_alert(config, recipient_email, subject, body):
+    port = int(str(config.get("smtp_port", "587")).strip() or "587")
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = config.get("smtp_sender_email", "")
+    message["To"] = recipient_email
+    message.set_content(body)
+
+    with smtplib.SMTP(config.get("smtp_host", ""), port, timeout=20) as smtp_server:
+        use_tls = str(config.get("smtp_use_tls", "true")).strip().lower() != "false"
+        if use_tls:
+            smtp_server.starttls()
+        username = str(config.get("smtp_username", "")).strip()
+        password = str(config.get("smtp_password", "")).strip()
+        if username:
+            smtp_server.login(username, password)
+        smtp_server.send_message(message)
+
+
+def build_mailto_link(recipient_email, subject, body):
+    query = urllib.parse.urlencode({"subject": subject, "body": body})
+    return f"mailto:{recipient_email}?{query}"
+
+
+def build_whatsapp_link(number, body):
+    clean_number = re.sub(r"[^0-9]", "", str(number))
+    return f"https://wa.me/{clean_number}?text={urllib.parse.quote(body)}"
+
+
+def build_sms_link(number, body):
+    return f"sms:{re.sub(r'[^0-9+]', '', str(number))}?body={urllib.parse.quote(body)}"
+
+
+def render_smtp_settings(key_prefix):
+    active_config = load_app_config()
+    with st.expander("Email Delivery Settings"):
+        with st.form(f"{key_prefix}_smtp_form"):
+            smtp_host = st.text_input("SMTP Host", value=active_config.get("smtp_host", ""))
+            smtp_port = st.text_input("SMTP Port", value=active_config.get("smtp_port", "587"))
+            smtp_username = st.text_input("SMTP Username", value=active_config.get("smtp_username", ""))
+            smtp_password = st.text_input("SMTP Password", value=active_config.get("smtp_password", ""), type="password")
+            smtp_sender_email = st.text_input("Sender Email", value=active_config.get("smtp_sender_email", ""))
+            smtp_use_tls = st.checkbox(
+                "Use TLS",
+                value=str(active_config.get("smtp_use_tls", "true")).strip().lower() != "false",
+            )
+            if st.form_submit_button("Save Email Settings"):
+                active_config.update(
+                    {
+                        "smtp_host": smtp_host,
+                        "smtp_port": smtp_port,
+                        "smtp_username": smtp_username,
+                        "smtp_password": smtp_password,
+                        "smtp_sender_email": smtp_sender_email,
+                        "smtp_use_tls": "true" if smtp_use_tls else "false",
+                    }
+                )
+                save_app_config(active_config)
+                st.success("Email delivery settings saved.")
+
+
+def render_headteacher_contact_form(school, key_prefix):
+    contacts_df = load_contacts_df()
+    district = st.session_state.get("user_district", "") or get_scope_label()
+    current_contact = contacts_df[
+        contacts_df["district"].fillna("").astype(str).str.strip().eq(district)
+        & contacts_df["school"].fillna("").astype(str).str.strip().eq(school)
+    ].tail(1)
+    current_values = current_contact.iloc[0].to_dict() if not current_contact.empty else {}
+
+    st.markdown("### 📞 School Contact Profile")
+    st.write("Save the email, phone, or WhatsApp contact that the Director should use for alerts and follow-up.")
+    with st.form(f"{key_prefix}_contact_form"):
+        contact_name = st.text_input("Contact Name", value=current_values.get("contact_name", ""))
+        role_name = st.text_input("Role", value=current_values.get("role", "Headteacher"))
+        email = st.text_input("Email", value=current_values.get("email", ""))
+        phone = st.text_input("Phone Number", value=current_values.get("phone", ""))
+        whatsapp_number = st.text_input("WhatsApp Number", value=current_values.get("whatsapp_number", ""))
+        preferred_channel = st.selectbox(
+            "Preferred Alert Channel",
+            ["Email", "WhatsApp", "SMS"],
+            index=["Email", "WhatsApp", "SMS"].index(current_values.get("preferred_channel", "Email"))
+            if current_values.get("preferred_channel", "Email") in ["Email", "WhatsApp", "SMS"]
+            else 0,
+        )
+        if st.form_submit_button("Save Contact Profile"):
+            upsert_contact(
+                {
+                    "district": district,
+                    "school": school,
+                    "contact_name": contact_name.strip(),
+                    "role": role_name.strip() or "Headteacher",
+                    "email": email.strip(),
+                    "phone": phone.strip(),
+                    "whatsapp_number": whatsapp_number.strip(),
+                    "preferred_channel": preferred_channel,
+                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                }
+            )
+            st.success("School contact profile saved for Director alerts.")
+
+
+def build_communication_queue(df, subject_cols):
+    queue_rows = []
+    scope_label = get_scope_label()
+    contacts_df = load_contacts_df()
+    school_sync_df = build_school_sync_status_df(df)
+    agg_df = build_aggregate_dataframe(df, subject_cols)
+
+    for _, school_row in school_sync_df.iterrows():
+        if int(school_row.get("Students Uploaded", 0)) > 0:
+            continue
+        school_name = school_row.get("School_Name", "")
+        contact_match = contacts_df[
+            contacts_df["district"].fillna("").astype(str).str.strip().eq(scope_label)
+            & contacts_df["school"].fillna("").astype(str).str.strip().eq(str(school_name).strip())
+        ].tail(1)
+        contact_record = contact_match.iloc[0].to_dict() if not contact_match.empty else {}
+        message = (
+            f"EduPulse reminder: {school_name} has not synced its student dataset yet for {scope_label}. "
+            "Please upload the school CSV so the district dashboard stays complete."
+        )
+        queue_rows.append(
+            {
+                "Alert Type": "Missing Upload",
+                "School_Name": school_name,
+                "Circuit": school_row.get("Circuit", ""),
+                "Recipient": contact_record.get("contact_name", ""),
+                "Email": contact_record.get("email", ""),
+                "Phone": contact_record.get("phone", ""),
+                "WhatsApp": contact_record.get("whatsapp_number", ""),
+                "Preferred Channel": contact_record.get("preferred_channel", "Email"),
+                "Subject": f"EduPulse Upload Reminder: {school_name}",
+                "Message": message,
+            }
+        )
+
+    if not agg_df.empty:
+        risk_df = agg_df[agg_df["Placement_Category"] == "Category D/SP"].copy().head(20)
+        for _, risk_row in risk_df.iterrows():
+            school_name = risk_row.get("School_Name", "")
+            contact_match = contacts_df[
+                contacts_df["district"].fillna("").astype(str).str.strip().eq(scope_label)
+                & contacts_df["school"].fillna("").astype(str).str.strip().eq(str(school_name).strip())
+            ].tail(1)
+            contact_record = contact_match.iloc[0].to_dict() if not contact_match.empty else {}
+            message = (
+                f"EduPulse alert: {risk_row.get('Student_Name', '')} from {school_name} is currently projected in "
+                f"{risk_row.get('Placement_Category', 'Category D/SP')} with aggregate {risk_row.get('Aggregate', '')}. "
+                "Please review attendance, assignments, and mock preparation."
+            )
+            queue_rows.append(
+                {
+                    "Alert Type": "At-Risk Student",
+                    "School_Name": school_name,
+                    "Circuit": risk_row.get("Circuit", ""),
+                    "Recipient": contact_record.get("contact_name", ""),
+                    "Email": contact_record.get("email", ""),
+                    "Phone": contact_record.get("phone", ""),
+                    "WhatsApp": contact_record.get("whatsapp_number", ""),
+                    "Preferred Channel": contact_record.get("preferred_channel", "Email"),
+                    "Subject": f"EduPulse Student Risk Alert: {risk_row.get('Student_Name', '')}",
+                    "Message": message,
+                }
+            )
+
+    return pd.DataFrame(queue_rows)
+
+
+def render_communication_center(df, subject_cols, key_prefix):
+    st.markdown("### 📣 Communication Center")
+    st.write("Prepare email, SMS, or WhatsApp alerts for missing uploads, at-risk students, and director notices.")
+    render_smtp_settings(f"{key_prefix}_smtp")
+    contacts_df = load_contacts_df()
+
+    with st.expander("Create a Custom Director Notice"):
+        if contacts_df.empty:
+            st.info("Custom notices will work better after schools save their contact profiles.")
+        school_options = sorted(contacts_df["school"].dropna().astype(str).str.strip().loc[lambda values: values != ""].unique().tolist())
+        selected_school = st.selectbox("Target School", school_options, key=f"{key_prefix}_custom_school") if school_options else ""
+        notice_subject = st.text_input("Notice Subject", key=f"{key_prefix}_custom_subject")
+        notice_body = st.text_area("Notice Message", key=f"{key_prefix}_custom_body", height=120)
+        if selected_school:
+            contact_match = contacts_df[
+                contacts_df["district"].fillna("").astype(str).str.strip().eq(get_scope_label())
+                & contacts_df["school"].fillna("").astype(str).str.strip().eq(selected_school)
+            ].tail(1)
+            if not contact_match.empty and notice_body.strip():
+                contact_row = contact_match.iloc[0]
+                custom_cols = st.columns(3)
+                with custom_cols[0]:
+                    if contact_row.get("email", ""):
+                        st.markdown(f"[Open Email Draft]({build_mailto_link(contact_row['email'], notice_subject, notice_body)})")
+                with custom_cols[1]:
+                    if contact_row.get("whatsapp_number", ""):
+                        st.markdown(f"[Open WhatsApp Draft]({build_whatsapp_link(contact_row['whatsapp_number'], notice_body)})")
+                with custom_cols[2]:
+                    if contact_row.get("phone", ""):
+                        st.markdown(f"[Open SMS Draft]({build_sms_link(contact_row['phone'], notice_body)})")
+
+    queue_df = build_communication_queue(df, subject_cols)
+    if queue_df.empty:
+        st.info("No alert queue items are available yet.")
+        return
+
+    st.dataframe(queue_df, use_container_width=True, height=320)
+    st.download_button(
+        "Download Alert Queue CSV",
+        queue_df.to_csv(index=False).encode("utf-8"),
+        file_name="edupulse_alert_queue.csv",
+        mime="text/csv",
+        key=f"{key_prefix}_download_alerts",
+    )
+
+    selected_alert = st.selectbox(
+        "Preview an alert",
+        options=queue_df.index.tolist(),
+        format_func=lambda idx: f"{queue_df.loc[idx, 'Alert Type']} | {queue_df.loc[idx, 'School_Name']}",
+        key=f"{key_prefix}_select_alert",
+    )
+    alert_row = queue_df.loc[selected_alert]
+    st.markdown("#### Alert Preview")
+    st.write(f"**Subject:** {alert_row['Subject']}")
+    st.text_area("Message", value=alert_row["Message"], height=140, key=f"{key_prefix}_message_preview")
+
+    active_config = load_app_config()
+    action_cols = st.columns(3)
+    with action_cols[0]:
+        if alert_row["Email"]:
+            st.markdown(f"[Open Email Draft]({build_mailto_link(alert_row['Email'], alert_row['Subject'], alert_row['Message'])})")
+            if smtp_config_is_ready(active_config) and st.button("Send Email Now", key=f"{key_prefix}_send_email"):
+                try:
+                    send_email_alert(active_config, alert_row["Email"], alert_row["Subject"], alert_row["Message"])
+                    st.success("Email alert sent successfully.")
+                except Exception as exc:
+                    st.error(f"Email delivery failed: {exc}")
+    with action_cols[1]:
+        if alert_row["WhatsApp"]:
+            st.markdown(f"[Open WhatsApp Draft]({build_whatsapp_link(alert_row['WhatsApp'], alert_row['Message'])})")
+    with action_cols[2]:
+        if alert_row["Phone"]:
+            st.markdown(f"[Open SMS Draft]({build_sms_link(alert_row['Phone'], alert_row['Message'])})")
+
+
+def render_reports_center(scope_df, subject_cols, role, school="", key_prefix="reports"):
+    scope_label = school if role == "Headteacher" and school else get_scope_label()
+    school_sync_df = build_school_sync_status_df(scope_df) if role == "Headteacher" else build_school_sync_status_df(load_data(show_errors=False)[0])
+    st.markdown("### 📦 Briefing Packs & Calibration")
+    st.write("Download meeting-ready CSV/PDF packs, review live model diagnostics, and monitor saved scenario calibration.")
+
+    report_scope_df = scope_df.copy()
+    report_title = scope_label
+    if role == "Director" and not scope_df.empty:
+        scope_mode = st.radio(
+            "Report Scope",
+            ["District/Municipal", "Circuit", "School"],
+            horizontal=True,
+            key=f"{key_prefix}_scope_mode",
+        )
+        if scope_mode == "Circuit" and "Circuit" in scope_df.columns:
+            circuit_options = sorted(scope_df["Circuit"].dropna().astype(str).str.strip().unique().tolist())
+            selected_circuit = st.selectbox("Choose Circuit", circuit_options, key=f"{key_prefix}_scope_circuit")
+            report_scope_df = scope_df[scope_df["Circuit"].fillna("").astype(str).str.strip() == selected_circuit].copy()
+            report_title = f"{selected_circuit} Circuit"
+        elif scope_mode == "School" and "School_Name" in scope_df.columns:
+            school_options = sorted(scope_df["School_Name"].dropna().astype(str).str.strip().unique().tolist())
+            selected_school = st.selectbox("Choose School", school_options, key=f"{key_prefix}_scope_school")
+            report_scope_df = scope_df[scope_df["School_Name"].fillna("").astype(str).str.strip() == selected_school].copy()
+            report_title = selected_school
+
+    download_cols = st.columns(2)
+    with download_cols[0]:
+        st.download_button(
+            "Download Briefing Pack (ZIP/CSV)",
+            build_briefing_zip_bytes(report_scope_df, subject_cols, report_title, school_sync_df=school_sync_df),
+            file_name=f"{slugify_name(report_title).lower()}_briefing_pack.zip",
+            mime="application/zip",
+            key=f"{key_prefix}_zip",
+            use_container_width=True,
+        )
+    with download_cols[1]:
+        st.download_button(
+            "Download Briefing Pack (PDF)",
+            build_briefing_pdf_bytes(report_scope_df, subject_cols, report_title, school_sync_df=school_sync_df),
+            file_name=f"{slugify_name(report_title).lower()}_briefing_pack.pdf",
+            mime="application/pdf",
+            key=f"{key_prefix}_pdf",
+            use_container_width=True,
+        )
+
+    ml_bundle = get_live_ml_bundle()
+    if ml_bundle:
+        model_rows = []
+        for subject_col, model_details in ml_bundle.items():
+            model_rows.append(
+                {
+                    "Subject": format_subject_name(f"{subject_col}{FINAL_SUFFIX}"),
+                    "Bundle Source": model_details.get("source", "Live model"),
+                    "Feature Count": len(model_details.get("feature_columns", [])),
+                    "Cross-Val R²": round(float(model_details["cv_r2"]), 3) if pd.notna(model_details["cv_r2"]) else np.nan,
+                    "Cross-Val MAE": round(float(model_details["cv_mae"]), 2) if pd.notna(model_details["cv_mae"]) else np.nan,
+                }
+            )
+        with st.expander("Live ML Model Diagnostics"):
+            st.caption("These pretrained subject models are loaded directly from the attached bece_models.joblib bundle and used inside the live predictor.")
+            st.dataframe(pd.DataFrame(model_rows), use_container_width=True)
+    else:
+        st.warning("No pretrained ML bundle could be loaded from bece_models.joblib, so the predictor will fall back to the weighted 30/70 proxy.")
+
+    calibration_df = build_scenario_calibration_df(scope_df, subject_cols)
+    st.markdown("#### Predicted vs Actual Calibration")
+    if calibration_df.empty:
+        st.info("Calibration history will appear after scenarios are saved and the students remain available in the live dataset.")
+    else:
+        st.dataframe(calibration_df, use_container_width=True)
+        st.download_button(
+            "Download Calibration CSV",
+            calibration_df.to_csv(index=False).encode("utf-8"),
+            file_name="edupulse_calibration.csv",
+            mime="text/csv",
+            key=f"{key_prefix}_calibration",
+        )
+
+
+# ============================================================
+# 11. DIRECTOR AND SCHOOL DASHBOARDS, TABLES, AND AUDITS
+# ============================================================
+def render_director_dashboard(df, subject_cols):
+    scope_label = get_scope_label()
+    agg_df = build_aggregate_dataframe(df, subject_cols)
+    unread_notifications = get_notifications("Director", district=scope_label, unread_only=True)
+    if agg_df.empty:
+        agg_df = pd.DataFrame(
+            columns=[
+                "Student_ID",
+                "Student_Name",
+                "School_Name",
+                "Circuit",
+                "Aggregate",
+                "Passed",
+                "Placement_Category",
+                "Gender",
+            ]
+        )
+    mapped_circuits = load_all_circuits()
+    school_sync_df = build_school_sync_status_df(df)
+    all_schools = school_sync_df["School_Name"].tolist()
+    all_circuits = combine_known_circuits(mapped_circuits, agg_df)
+
+    if not unread_notifications.empty:
+        st.warning(f"You have {len(unread_notifications)} new Headteacher update notification(s). Check the Director Alerts panel in the sidebar.")
+
+    st.markdown("### 🏫 School Upload Coverage")
+    st.write("Headteachers upload their own school CSV files. Schools without a synced upload stay visible here with zero students and an awaiting status.")
+    if school_sync_df.empty:
+        st.warning("No school-to-circuit mappings are available yet. Upload the circuits CSV to begin onboarding schools.")
+    else:
+        coverage_cols = st.columns(3)
+        with coverage_cols[0]:
+            render_metric_card("Mapped Schools", len(school_sync_df))
+        with coverage_cols[1]:
+            render_metric_card("Schools Synced", int((school_sync_df["Students Uploaded"] > 0).sum()))
+        with coverage_cols[2]:
+            render_metric_card("Awaiting Upload", int((school_sync_df["Students Uploaded"] == 0).sum()))
+        st.dataframe(school_sync_df, use_container_width=True)
+
+    st.markdown(f"### 🏆 {scope_label} Excellence Rankings")
+    st.write("Ranking schools by average Best 6 Aggregate. Lower is better. Schools without uploads stay at zero with an awaiting-upload status.")
+
+    grouped_school_stats = (
+        agg_df.groupby("School_Name", as_index=False)
+        .agg({"Aggregate": "mean", "Passed": "mean"})
+        .sort_values("Aggregate", ascending=True)
+    )
+    if school_sync_df.empty:
+        school_stats = grouped_school_stats.copy()
+        if "Circuit" not in school_stats.columns:
+            school_stats["Circuit"] = ""
+        school_stats["Students Uploaded"] = 0
+        school_stats["Upload Status"] = "Synced"
+    else:
+        school_stats = school_sync_df.merge(grouped_school_stats, on="School_Name", how="left")
+    school_stats["Upload Status"] = school_stats["Students Uploaded"].apply(
+        lambda count: "Synced" if int(count) > 0 else "Awaiting Upload"
+    )
+    school_stats["Pass Rate %"] = school_stats["Passed"].fillna(0) * 100
+    school_stats["Aggregate_Display"] = school_stats["Aggregate"].fillna(0)
+    school_stats["Aggregate_Label"] = school_stats["Aggregate"].apply(
+        lambda value: "No data" if pd.isna(value) else f"{value:.1f}"
+    )
+    school_stats = school_stats.sort_values(
+        by=["Upload Status", "Aggregate", "School_Name"],
+        ascending=[False, True, True],
+        na_position="last",
+    )
+
+    fig_agg = px.bar(
+        school_stats,
+        x="Aggregate_Display",
+        y="School_Name",
+        orientation="h",
+        title="Average School Aggregate (Lower = Stronger)",
+        color="Upload Status",
+        color_discrete_map={"Synced": "#2563eb", "Awaiting Upload": "#94a3b8"},
+        text="Aggregate_Label",
+    )
+    st.plotly_chart(fig_agg, use_container_width=True)
+
+    st.markdown(f"### 📈 {scope_label} Pass Rate (%)")
+    fig_pass = px.bar(
+        school_stats.sort_values(["Upload Status", "Pass Rate %", "School_Name"], ascending=[False, False, True]),
+        x="Pass Rate %",
+        y="School_Name",
+        orientation="h",
+        color="Upload Status",
+        color_discrete_map={"Synced": "#16a34a", "Awaiting Upload": "#94a3b8"},
+        title="Percentage of Students with Aggregate <= 30",
+        text_auto=".1f",
+    )
+    st.plotly_chart(fig_pass, use_container_width=True)
+
+    st.markdown("---")
+    metric_columns = st.columns(4)
+    active_school_stats = school_stats[school_stats["Upload Status"] == "Synced"].copy()
+    if active_school_stats.empty:
+        st.info("No school has synced student data yet. Schools will move out of Awaiting Upload as each Headteacher submits the school CSV.")
+    with metric_columns[0]:
+        render_metric_card("👥 Total Students", len(df))
+    with metric_columns[1]:
+        avg_aggregate = f"{active_school_stats['Aggregate'].mean():.1f}" if not active_school_stats.empty else "--"
+        render_metric_card(f"📉 {scope_label} Avg Aggregate", avg_aggregate)
+    with metric_columns[2]:
+        pass_rate = f"{active_school_stats['Passed'].mean() * 100:.1f}%" if not active_school_stats.empty else "--"
+        render_metric_card(f"✅ {scope_label} Pass Rate", pass_rate)
+    with metric_columns[3]:
+        lead_school = (
+            active_school_stats.sort_values("Aggregate", ascending=True).iloc[0]["School_Name"]
+            if not active_school_stats.empty
+            else "Awaiting first upload"
+        )
+        render_metric_card("🏆 Lead School", lead_school)
+
+    st.markdown("---")
+    st.markdown("### ⚖️ Gender Performance Parity")
+    if not agg_df.empty and "Gender" in agg_df.columns:
+        gender_stats = (
+            agg_df[agg_df["Gender"] != "Unspecified"]
+            .groupby("Gender", as_index=False)["Aggregate"]
+            .mean()
+            .sort_values("Aggregate", ascending=True)
+        )
+
+        if not gender_stats.empty:
+            g_col1, g_col2 = st.columns([1, 2])
+
+            with g_col1:
+                if len(gender_stats) >= 2:
+                    leader = gender_stats.iloc[0]
+                    trailer = gender_stats.iloc[1]
+                    gap = float(trailer["Aggregate"] - leader["Aggregate"])
+                    render_metric_card(
+                        "Gender Gap (Agg)",
+                        f"{gap:.2f}",
+                        delta=f"{leader['Gender']} leading",
+                    )
+                else:
+                    render_metric_card("Gender Group", gender_stats.iloc[0]["Gender"])
+
+            with g_col2:
+                fig_gender = px.bar(
+                    gender_stats,
+                    x="Gender",
+                    y="Aggregate",
+                    color="Gender",
+                    color_discrete_map={"Boys": "#3498db", "Girls": "#e74c3c"},
+                    title="Average Aggregate by Gender",
+                    text_auto=".2f",
+                )
+                st.plotly_chart(fig_gender, use_container_width=True)
+
+            if len(gender_stats) >= 2:
+                leader = gender_stats.iloc[0]
+                trailer = gender_stats.iloc[1]
+                gap = float(trailer["Aggregate"] - leader["Aggregate"])
+                if gap < 1:
+                    st.success(
+                        f"Parity is strong. The current gap is only {gap:.1f} aggregate points."
+                    )
+                else:
+                    st.warning(
+                        f"{trailer['Gender']} are trailing {leader['Gender']} by {gap:.1f} aggregate points."
+                    )
+            else:
+                st.info(f"Only one gender group is represented in the current {scope_label} data.")
+        else:
+            st.warning("Gender values are present but could not be grouped for analysis.")
+    elif agg_df.empty:
+        st.info("Gender analysis will appear after schools begin syncing student data.")
+    else:
+        st.warning("Gender data is missing from the database. Please update the source file.")
+
+    st.markdown("---")
+    st.markdown(f"### 🎓 {scope_label} CSSPS Placement Forecast")
+    placement_summary = (
+        agg_df["Placement_Category"]
+        .value_counts()
+        .reindex(PLACEMENT_ORDER, fill_value=0)
+        .reset_index()
+    )
+    placement_summary.columns = ["Category", "Student Count"]
+
+    fig_place = px.pie(
+        placement_summary,
+        values="Student Count",
+        names="Category",
+        hole=0.4,
+        title=f"Projected Placement Distribution ({scope_label}-Wide)",
+        color_discrete_sequence=px.colors.qualitative.Pastel,
+    )
+    st.plotly_chart(fig_place, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("### 🗺️ Circuit Pressure Map")
+    circuit_stats = (
+        agg_df.groupby("Circuit", as_index=False)["Aggregate"]
+        .mean()
+    )
+    if all_circuits:
+        circuit_stats = pd.DataFrame({"Circuit": all_circuits}).merge(circuit_stats, on="Circuit", how="left")
+
+    circuit_stats["Status"] = circuit_stats["Aggregate"].apply(
+        lambda value: "No Current Data" if pd.isna(value) else "Has Data"
+    )
+    circuit_stats["Aggregate_Display"] = circuit_stats["Aggregate"].fillna(0)
+    circuit_stats["Aggregate_Label"] = circuit_stats["Aggregate"].apply(
+        lambda value: "No data" if pd.isna(value) else f"{value:.1f}"
+    )
+    circuit_stats = circuit_stats.sort_values(
+        by=["Status", "Aggregate", "Circuit"],
+        ascending=[True, True, True],
+        na_position="last",
+    )
+
+    fig_heat = px.bar(
+        circuit_stats,
+        x="Aggregate_Display",
+        y="Circuit",
+        orientation="h",
+        color="Status",
+        text="Aggregate_Label",
+        title=f"Circuit Pressure Map ({len(all_circuits)} Circuits)",
+        color_discrete_map={"Has Data": "#dc2626", "No Current Data": "#94a3b8"},
+    )
+    st.plotly_chart(fig_heat, use_container_width=True)
+    missing_circuits = circuit_stats.loc[circuit_stats["Status"] == "No Current Data", "Circuit"].tolist()
+    if missing_circuits:
+        st.caption(
+            "The following circuits are in the mapping but have no student records yet in the current dataset: "
+            + ", ".join(missing_circuits)
+            + "."
+        )
+
+    available_circuit_stats = circuit_stats[circuit_stats["Status"] == "Has Data"].copy()
+    if not available_circuit_stats.empty:
+        best_circuit = available_circuit_stats.sort_values("Aggregate", ascending=True).iloc[0]["Circuit"]
+        worst_circuit = available_circuit_stats.sort_values("Aggregate", ascending=False).iloc[0]["Circuit"]
+        st.info(
+            f"{scope_label} strategy: {best_circuit} is currently the strongest circuit. "
+            f"A peer-mentoring exchange between {best_circuit} and {worst_circuit} could help spread best practices."
+        )
+
+    st.markdown("---")
+    st.markdown(f"### 📊 {scope_label}-Wide Placement Summaries")
+
+    school_pivot = (
+        agg_df.groupby(["School_Name", "Placement_Category"])
+        .size()
+        .unstack(fill_value=0)
+        .reindex(columns=PLACEMENT_ORDER, fill_value=0)
+    )
+    if all_schools:
+        school_pivot = school_pivot.reindex(all_schools, fill_value=0)
+    school_pivot["Total"] = school_pivot.sum(axis=1)
+    school_pivot.loc["Total Students"] = school_pivot.sum(axis=0)
+    st.write("#### 🏫 Performance by School")
+    try:
+        st.dataframe(
+            school_pivot.style.background_gradient(cmap="YlGn"),
+            use_container_width=True,
+        )
+    except Exception:
+        st.dataframe(school_pivot, use_container_width=True)
+
+    circuit_pivot = (
+        agg_df.groupby(["Circuit", "Placement_Category"])
+        .size()
+        .unstack(fill_value=0)
+        .reindex(columns=PLACEMENT_ORDER, fill_value=0)
+    )
+    if all_circuits:
+        circuit_pivot = circuit_pivot.reindex(all_circuits, fill_value=0)
+    circuit_pivot["Total"] = circuit_pivot.sum(axis=1)
+    circuit_pivot.loc["Total Students"] = circuit_pivot.sum(axis=0)
+    st.markdown("---")
+    st.write("#### 🗺️ Performance by Circuit")
+    try:
+        st.dataframe(
+            circuit_pivot.style.background_gradient(cmap="BuPu"),
+            use_container_width=True,
+        )
+    except Exception:
+        st.dataframe(circuit_pivot, use_container_width=True)
+    st.caption(
+        f"Placement summary check: {int(agg_df.shape[0])} students loaded and {int(circuit_pivot.loc['Total Students', 'Total'])} students counted across circuit totals."
+    )
+    render_scroll_to_top()
+
+
+def render_audit_table(display_df, key_prefix, filename):
+    st.markdown("### 📋 Student Audit")
+
+    audit_df = display_df.drop(columns=["Search_Label"], errors="ignore").copy()
+    preferred_order = ["Student_Name", "Gender", "School_Name", "Circuit"]
+    ordered_columns = [column for column in preferred_order if column in audit_df.columns]
+    ordered_columns.extend(column for column in audit_df.columns if column not in ordered_columns)
+    audit_df = audit_df[ordered_columns]
+
+    st.caption("Filters below use strict matching by field.")
+    filter_columns = st.columns(5)
+
+    student_name_filter = ""
+    student_id_filter = ""
+    school_filter = "All"
+    circuit_filter = "All"
+    gender_filter = "All"
+
+    with filter_columns[0]:
+        if "Student_Name" in audit_df.columns:
+            student_name_filter = st.text_input(
+                "Student Name",
+                key=f"{key_prefix}_student_name_filter",
+                help="Exact student-name match.",
+            ).strip()
+
+    with filter_columns[1]:
+        if "Student_ID" in audit_df.columns:
+            student_id_filter = st.text_input(
+                "Student ID",
+                key=f"{key_prefix}_student_id_filter",
+                help="Exact student-ID match.",
+            ).strip()
+
+    with filter_columns[2]:
+        if "School_Name" in audit_df.columns:
+            school_options = ["All"] + sorted(
+                audit_df["School_Name"].fillna("").astype(str).str.strip().loc[lambda values: values != ""].unique().tolist()
+            )
+            school_filter = st.selectbox("School", school_options, key=f"{key_prefix}_school_filter")
+
+    with filter_columns[3]:
+        if "Circuit" in audit_df.columns:
+            circuit_options = ["All"] + sorted(
+                audit_df["Circuit"].fillna("").astype(str).str.strip().loc[lambda values: values != ""].unique().tolist()
+            )
+            circuit_filter = st.selectbox("Circuit", circuit_options, key=f"{key_prefix}_circuit_filter")
+
+    with filter_columns[4]:
+        if "Gender" in audit_df.columns:
+            gender_options = ["All"] + sorted(
+                audit_df["Gender"].fillna("").astype(str).str.strip().loc[lambda values: values != ""].unique().tolist()
+            )
+            gender_filter = st.selectbox("Gender", gender_options, key=f"{key_prefix}_gender_filter")
+
+    if student_name_filter and "Student_Name" in audit_df.columns:
+        audit_df = audit_df[
+            audit_df["Student_Name"].fillna("").astype(str).str.strip().str.casefold() == student_name_filter.casefold()
+        ]
+
+    if student_id_filter and "Student_ID" in audit_df.columns:
+        audit_df = audit_df[
+            audit_df["Student_ID"].fillna("").astype(str).str.strip().str.casefold() == student_id_filter.casefold()
+        ]
+
+    if school_filter != "All" and "School_Name" in audit_df.columns:
+        audit_df = audit_df[
+            audit_df["School_Name"].fillna("").astype(str).str.strip() == school_filter
+        ]
+
+    if circuit_filter != "All" and "Circuit" in audit_df.columns:
+        audit_df = audit_df[
+            audit_df["Circuit"].fillna("").astype(str).str.strip() == circuit_filter
+        ]
+
+    if gender_filter != "All" and "Gender" in audit_df.columns:
+        audit_df = audit_df[
+            audit_df["Gender"].fillna("").astype(str).str.strip() == gender_filter
+        ]
+
+    st.caption(f"Matching rows: {len(audit_df)}")
+    st.dataframe(audit_df, use_container_width=True)
+    st.download_button(
+        "Download current view as CSV",
+        audit_df.to_csv(index=False).encode("utf-8"),
+        file_name=filename,
+        mime="text/csv",
+        key=f"{key_prefix}_download",
+    )
+    render_scroll_to_top()
+
+
+def render_school_dashboard(school_df, subject_cols):
+    if school_df.empty:
+        st.warning("No data is available for this school.")
+        render_scroll_to_top()
+        return
+    if not subject_cols:
+        st.warning("No BECE subject columns were found for school analysis.")
+        render_scroll_to_top()
+        return
+
+    school_name = school_df["School_Name"].iloc[0]
+    agg_df = build_aggregate_dataframe(school_df, subject_cols)
+
+    st.markdown(f"### 📊 School Performance: {school_name}")
+    st.write("A quick view of current BECE readiness, placement outlook, and action-zone pressure.")
+
+    metric_columns = st.columns(4)
+    with metric_columns[0]:
+        render_metric_card("👥 Total Students", len(school_df))
+    with metric_columns[1]:
+        render_metric_card("📉 Avg Aggregate", f"{agg_df['Aggregate'].mean():.1f}")
+    with metric_columns[2]:
+        render_metric_card("✅ Pass Rate", f"{agg_df['Passed'].mean() * 100:.1f}%")
+    with metric_columns[3]:
+        best_student = agg_df.sort_values("Aggregate", ascending=True).iloc[0]["Student_Name"]
+        render_metric_card("🌟 Top Student", best_student)
+
+    left_col, right_col = st.columns(2)
+    with left_col:
+        subject_summary = pd.DataFrame(
+            {
+                "Subject": [format_subject_name(subject) for subject in subject_cols],
+                "Average Score": [safe_float(school_df[subject].mean(), 0.0) for subject in subject_cols],
+            }
+        ).sort_values("Average Score", ascending=True)
+
+        fig_subjects = px.bar(
+            subject_summary,
+            x="Average Score",
+            y="Subject",
+            orientation="h",
+            color="Average Score",
+            color_continuous_scale="Blues",
+            title="Average BECE Score by Subject",
+            text_auto=".1f",
+        )
+        st.plotly_chart(fig_subjects, use_container_width=True)
+
+    with right_col:
+        if "Action_Zone" in school_df.columns and school_df["Action_Zone"].astype(str).str.strip().ne("").any():
+            zone_summary = (
+                school_df["Action_Zone"]
+                .fillna("Unclassified")
+                .astype(str)
+                .value_counts()
+                .reset_index()
+            )
+            zone_summary.columns = ["Action Zone", "Student Count"]
+            fig_zones = px.pie(
+                zone_summary,
+                values="Student Count",
+                names="Action Zone",
+                title="Action Zone Distribution",
+                color_discrete_sequence=px.colors.qualitative.Safe,
+            )
+            st.plotly_chart(fig_zones, use_container_width=True)
+        else:
+            placement_summary = (
+                agg_df["Placement_Category"]
+                .value_counts()
+                .reindex(PLACEMENT_ORDER, fill_value=0)
+                .reset_index()
+            )
+            placement_summary.columns = ["Category", "Student Count"]
+            fig_school_place = px.pie(
+                placement_summary,
+                values="Student Count",
+                names="Category",
+                title="School Placement Forecast",
+                color_discrete_sequence=px.colors.qualitative.Set2,
+            )
+            st.plotly_chart(fig_school_place, use_container_width=True)
+
+    summary_table = (
+        agg_df[["Student_Name", "Student_ID", "Aggregate", "Placement_Category"]]
+        .sort_values("Aggregate", ascending=True)
+        .reset_index(drop=True)
+    )
+    st.markdown("#### 🏅 Best 6 Aggregate Ranking")
+    st.dataframe(summary_table, use_container_width=True)
+    render_scroll_to_top()
+
+
+# ============================================================
+# 12. HEADTEACHER ENTRY FORMS AND WHAT-IF PREDICTION WORKSPACE
+# ============================================================
+def manual_entry_form(df, subject_cols, school):
+    st.markdown("### ➕ Add Single Student")
+    st.info("Use this update form to add one new student after the initial school CSV upload. The record syncs immediately to the Director dashboard under the same school and mapped circuit.")
+    st.caption("Attendance is optional here. You can enter the exact percentage if you have it, or leave it blank and EduPulse will auto-fill it in the background.")
+
+    if not subject_cols:
+        st.warning("No BECE subject columns were found, so results cannot be entered yet.")
+        render_scroll_to_top()
+        return
+
+    csv_columns = [column for column in df.columns if column != "Search_Label"]
+    core_subjects = [subject for subject in subject_cols if is_core_subject(subject)]
+    elective_subjects = [subject for subject in subject_cols if subject not in core_subjects]
+    suggested_student_id = f"{build_school_student_id_prefix(school)}-{get_next_school_student_id_number(school, build_school_student_id_prefix(school)):04d}"
+    suggested_attendance = resolve_attendance_default_value(
+        existing_school_df=df[df["School_Name"].fillna("").astype(str).str.strip() == school].copy() if "School_Name" in df.columns else None,
+        existing_all_df=df,
+    )
+
+    with st.form("bece_submit", clear_on_submit=True):
+        student_name = st.text_input("Student Full Name")
+        student_id = st.text_input("Student ID", value=suggested_student_id, help="A school-specific ID is suggested automatically. You can edit it if needed.")
+
+        gender = st.selectbox("Gender", ["Not specified", "F", "M"])
+        attendance_input = st.text_input(
+            "Attendance Percent (optional)",
+            placeholder=f"Leave blank to use {suggested_attendance:.1f}%",
+            help="Use (days present / total school days) x 100. Example: 142/150 x 100 = 94.7",
+        )
+
+        st.markdown("#### Core Subjects")
+        grade_inputs = {}
+        core_columns = st.columns(2)
+        for index, subject in enumerate(core_subjects):
+            with core_columns[index % 2]:
+                grade_inputs[subject] = st.number_input(
+                    f"{format_subject_name(subject)} Grade (1-9)",
+                    min_value=1,
+                    max_value=9,
+                    value=5,
+                    key=f"entry_{subject}",
+                )
+
+        st.markdown("#### Electives")
+        elective_columns = st.columns(3)
+        for index, subject in enumerate(elective_subjects):
+            with elective_columns[index % 3]:
+                grade_inputs[subject] = st.number_input(
+                    f"{format_subject_name(subject)} Grade (1-9)",
+                    min_value=1,
+                    max_value=9,
+                    value=5,
+                    key=f"entry_{subject}",
+                )
+
+        if st.form_submit_button("Upload to District/Municipal Records", type="primary"):
+            final_student_id = student_id.strip() or suggested_student_id
+
+            if not student_name.strip() or not final_student_id.strip():
+                st.error("Student name and student ID are required.")
+                return
+
+            attendance_value = None
+            if attendance_input.strip():
+                try:
+                    attendance_value = float(attendance_input.strip())
+                except ValueError:
+                    st.error("Attendance Percent must be a valid number between 0 and 100.")
+                    return
+                if attendance_value < 0 or attendance_value > 100:
+                    st.error("Attendance Percent must be between 0 and 100.")
+                    return
+
+            existing_ids = df["Student_ID"].astype(str).str.strip() if "Student_ID" in df.columns else pd.Series(dtype=str)
+            if final_student_id.strip() in set(existing_ids.tolist()):
+                st.error("That Student ID already exists in the district/municipal records.")
+                return
+
+            record = {column: pd.NA for column in csv_columns}
+            record["Student_ID"] = final_student_id.strip()
+            record["Student_Name"] = student_name.strip()
+            record["School_Name"] = school
+
+            if "Gender" in record:
+                record["Gender"] = "" if gender == "Not specified" else gender
+            if "Attendance_Percent" in record:
+                if attendance_value is not None:
+                    record["Attendance_Percent"] = round(attendance_value, 1)
+                else:
+                    school_attendance = pd.to_numeric(
+                        df.loc[df["School_Name"] == school, "Attendance_Percent"],
+                        errors="coerce",
+                    ) if {"School_Name", "Attendance_Percent"}.issubset(df.columns) else pd.Series(dtype=float)
+                    municipality_attendance = pd.to_numeric(df["Attendance_Percent"], errors="coerce") if "Attendance_Percent" in df.columns else pd.Series(dtype=float)
+                    if school_attendance.notna().any():
+                        record["Attendance_Percent"] = round(float(school_attendance.mean()), 1)
+                    elif municipality_attendance.notna().any():
+                        record["Attendance_Percent"] = round(float(municipality_attendance.mean()), 1)
+                    else:
+                        record["Attendance_Percent"] = 75.0
+            if "Circuit" in record:
+                record["Circuit"] = load_circuit_lookup().get(school, school)
+
+            final_scores = []
+            for subject, grade in grade_inputs.items():
+                score = grade_to_score(grade)
+                final_scores.append(score)
+                if subject in record:
+                    record[subject] = score
+
+                prefix = subject.replace(FINAL_SUFFIX, "")
+                for suffix in ASSESSMENT_SUFFIXES:
+                    column_name = f"{prefix}_{suffix}"
+                    if column_name in record:
+                        record[column_name] = score
+
+            if "Math_Improvement" in record:
+                record["Math_Improvement"] = 0
+            if "Math_Consistency" in record:
+                record["Math_Consistency"] = 0
+            if "Action_Zone" in record and final_scores:
+                record["Action_Zone"] = action_zone_from_average(sum(final_scores) / len(final_scores))
+
+            new_row_df = pd.DataFrame([record]).reindex(columns=csv_columns)
+            new_row_df.to_csv(DATA_FILE, mode="a", header=False, index=False)
+            create_notification(
+                event_type="student_added",
+                message=(
+                    f"New student added by {st.session_state.get('current_user', 'Headteacher')}: "
+                    f"{student_name.strip()} ({final_student_id.strip()}) for {school} in {record.get('Circuit', school)}."
+                ),
+                target_role="Director",
+                school=school,
+                circuit=str(record.get("Circuit", school)).strip(),
+                student_id=final_student_id.strip(),
+                student_name=student_name.strip(),
+                created_by=st.session_state.get("current_user", ""),
+                district=st.session_state.get("user_district", "") or get_scope_label(),
+            )
+            st.cache_data.clear()
+            st.session_state["portal_flash_message"] = (
+                f"✅ Student added successfully: {student_name.strip()} ({final_student_id.strip()}) has been synced to {school}."
+            )
+            st.session_state["portal_flash_severity"] = "success"
+            st.rerun()
+    render_scroll_to_top()
+
+
+def render_manual_grade_predictor():
+    with st.expander("📝 Manual BECE Grade Entry (Placement Predictor)"):
+        st.write("Enter the four core grades and the two best elective grades to forecast CSSPS placement.")
+
+        core_cols = st.columns(4)
+        with core_cols[0]:
+            math_grade = st.number_input("Math", 1, 9, 5, key="manual_math")
+        with core_cols[1]:
+            english_grade = st.number_input("English", 1, 9, 5, key="manual_english")
+        with core_cols[2]:
+            science_grade = st.number_input("Science", 1, 9, 5, key="manual_science")
+        with core_cols[3]:
+            social_grade = st.number_input("Social", 1, 9, 5, key="manual_social")
+
+        elective_cols = st.columns(2)
+        with elective_cols[0]:
+            elective_one = st.number_input("Best Elective Grade", 1, 9, 5, key="manual_elective_1")
+        with elective_cols[1]:
+            elective_two = st.number_input("2nd Best Elective Grade", 1, 9, 5, key="manual_elective_2")
+
+        aggregate = math_grade + english_grade + science_grade + social_grade + elective_one + elective_two
+        placement = predict_placement(aggregate)
+
+        metric_cols = st.columns(2)
+        with metric_cols[0]:
+            st.metric("Total Aggregate", aggregate, help="Lower is better.")
+        with metric_cols[1]:
+            st.info(f"**Predicted Placement:** {placement}")
+
+        st.caption("This tool is for forecasting only. It does not write anything to the district/municipal records.")
+    render_scroll_to_top()
+
+
+def render_student_predictor(display_df, subject_cols, key_prefix):
+    # This workspace compares current student performance with a
+    # scenario-driven ML projection and lets staff save the scenario.
+    st.markdown("### 🔍 Student-Specific Deep Dive")
+
+    if display_df.empty:
+        st.warning("No student data is available for prediction.")
+        render_scroll_to_top()
+        return
+    if not subject_cols:
+        st.warning("No BECE subject columns were found for prediction.")
+        render_scroll_to_top()
+        return
+
+    working_df = display_df.copy()
+    if "Search_Label" not in working_df.columns and {"Student_Name", "Student_ID"}.issubset(working_df.columns):
+        working_df["Search_Label"] = (
+            working_df["Student_Name"].astype(str).str.strip()
+            + " ("
+            + working_df["Student_ID"].astype(str).str.strip()
+            + ")"
+        )
+
+    if "Search_Label" not in working_df.columns:
+        st.warning("Student search labels could not be created from the current data.")
+        render_scroll_to_top()
+        return
+
+    options = ["Select a student..."] + sorted(working_df["Search_Label"].dropna().unique().tolist())
+    student_choice = st.selectbox("Search for a student", options=options, key=f"{key_prefix}_student")
+
+    if student_choice == "Select a student...":
+        render_scroll_to_top()
+        return
+
+    student_match = working_df[working_df["Search_Label"] == student_choice]
+    if student_match.empty:
+        st.warning("The selected student could not be found.")
+        render_scroll_to_top()
+        return
+
+    row = student_match.iloc[0]
+    student_name = row["Student_Name"]
+    current_outcome = compute_student_outcome_details(row, subject_cols)
+    ml_bundle = get_live_ml_bundle()
+    model_ready_count = len(ml_bundle)
+
+    assignment_cols = [column for column in working_df.columns if column.endswith("_Assignments")]
+    mock_cols = [column for column in working_df.columns if column.endswith("_Mock2")]
+
+    current_attendance = safe_float(row.get("Attendance_Percent"), 75.0)
+    current_assignment = average_row_values(row, assignment_cols, safe_float(row.get("Mathematics_Assignments"), 50.0))
+    current_mock = average_row_values(row, mock_cols, safe_float(row.get("Mathematics_Mock2"), 50.0))
+
+    st.write("Adjust the intervention levers below to run a live ML forecast. EduPulse now blends notebook-derived machine learning with explicit 30/70 score logic and raw-score tracking.")
+
+    meta_cols = st.columns([1.2, 1, 1])
+    with meta_cols[0]:
+        scenario_name = st.text_input("Scenario Name", value="Focused improvement plan", key=f"{key_prefix}_scenario_name")
+    with meta_cols[1]:
+        st.metric("ML Models Ready", model_ready_count, help="One pretrained model is available per BECE subject where the joblib bundle includes it.")
+    with meta_cols[2]:
+        st.metric("Current Best 6 Raw Total", f"{current_outcome['best_six_raw_total']:.1f}")
+
+    intervention_note = st.text_area(
+        "Intervention Notes",
+        placeholder="Example: weekly attendance check, Saturday maths clinic, two mock drills before the next revision cycle.",
+        key=f"{key_prefix}_intervention_note",
+        height=110,
+    )
+
+    slider_cols = st.columns(3)
+    with slider_cols[0]:
+        target_attendance = st.slider(
+            "Attendance %",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(round(current_attendance, 1)),
+            key=f"{key_prefix}_attendance",
+        )
+    with slider_cols[1]:
+        target_assignment = st.slider(
+            "Assignments %",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(round(current_assignment, 1)),
+            key=f"{key_prefix}_assignment",
+        )
+    with slider_cols[2]:
+        target_mock = st.slider(
+            "Mock Prep %",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(round(current_mock, 1)),
+            key=f"{key_prefix}_mock",
+        )
+
+    st.markdown("#### Live ML Forecast Across Subjects")
+    predicted_rows = []
+    predicted_scores = {}
+    subject_columns = st.columns(3)
+
+    for index, subject in enumerate(subject_cols):
+        # Every subject is predicted independently with its own pretrained model.
+        prediction_result = predict_subject_score_ml(
+            row,
+            subject,
+            ml_bundle,
+            attendance_value=target_attendance,
+            assignment_value=target_assignment,
+            mock_value=target_mock,
+        )
+        predicted_score = prediction_result["predicted_score"]
+        predicted_scores[subject] = predicted_score
+        score_delta = predicted_score - prediction_result["current_score"]
+        if predicted_score < 45:
+            risk_flag = "Critical"
+        elif predicted_score < 55:
+            risk_flag = "Watch"
+        else:
+            risk_flag = "Stable"
+
+        predicted_rows.append(
+            {
+                "subject_col": subject,
+                "Subject": prediction_result["subject_name"],
+                "Current Score": prediction_result["current_score"],
+                "Predicted Score": prediction_result["predicted_score"],
+                "Predicted Grade": prediction_result["predicted_grade"],
+                "Continuous Assessment": prediction_result["continuous_assessment"],
+                "CA 30 Component": prediction_result["ca_30_component"],
+                "Exam 70 Proxy": prediction_result["exam_70_proxy"],
+                "Weighted 30/70 Proxy": prediction_result["weighted_30_70_proxy"],
+                "School Bias": prediction_result["school_bias"],
+                "Risk Flag": risk_flag,
+            }
+        )
+
+        with subject_columns[index % 3]:
+            st.metric(
+                prediction_result["subject_name"],
+                f"Grade {prediction_result['predicted_grade']}",
+                delta=f"{score_delta:+.1f} pts",
+            )
+
+    predicted_outcome = compute_student_outcome_details(row, subject_cols, score_override=predicted_scores)
+
+    st.markdown("---")
+    metric_cols = st.columns(4)
+    with metric_cols[0]:
+        st.metric("Current Aggregate", f"{current_outcome['aggregate']:.0f}")
+    with metric_cols[1]:
+        st.metric(
+            "Predicted Aggregate",
+            f"{predicted_outcome['aggregate']:.0f}",
+            delta=f"{predicted_outcome['aggregate'] - current_outcome['aggregate']:+.1f}",
+            delta_color="inverse",
+            help="Lower is better. EduPulse uses the 4 core subjects plus the best 2 electives chosen dynamically per student.",
+        )
+    with metric_cols[2]:
+        st.metric(
+            "Predicted Best 6 Raw Total",
+            f"{predicted_outcome['best_six_raw_total']:.1f}",
+            delta=f"{predicted_outcome['best_six_raw_total'] - current_outcome['best_six_raw_total']:+.1f}",
+        )
+    with metric_cols[3]:
+        st.info(f"**CSSPS Outlook:**\n\n{predicted_outcome['placement_outlook']}")
+
+    st.caption(
+        f"Best two electives selected automatically for this scenario: {predicted_outcome['best_two_subject_names']}. "
+        "If elective grades tie, higher raw scores are favored for tie-breaking."
+    )
+    if predicted_outcome["tie_break_band"]:
+        st.caption(f"Category A raw-score tie-break signal: {predicted_outcome['tie_break_band']}.")
+
+    recommendations = generate_intervention_recommendations(
+        predicted_rows,
+        current_attendance,
+        target_attendance,
+        target_assignment,
+        target_mock,
+    )
+    recommendation_text = "\n".join([f"- {recommendation}" for recommendation in recommendations])
+
+    guidance_cols = st.columns([1.1, 1])
+    with guidance_cols[0]:
+        st.markdown("#### Suggested Intervention Plan")
+        st.markdown(recommendation_text)
+        if intervention_note.strip():
+            st.caption(f"Saved note: {intervention_note.strip()}")
+    with guidance_cols[1]:
+        subject_forecast_df = pd.DataFrame(predicted_rows)
+        top_risk_subjects = subject_forecast_df.sort_values(["Predicted Score", "Subject"], ascending=[True, True]).head(3)
+        st.markdown("#### Priority Subjects")
+        st.dataframe(top_risk_subjects[["Subject", "Predicted Score", "Predicted Grade", "Risk Flag"]], use_container_width=True)
+
+    with st.expander("View full subject forecast, 30/70 components, and model source"):
+        st.dataframe(pd.DataFrame(predicted_rows), use_container_width=True)
+
+    action_cols = st.columns(3)
+    with action_cols[0]:
+        if st.button("Save Scenario", type="primary", key=f"{key_prefix}_save_scenario"):
+            save_prediction_scenario(
+                row,
+                scenario_name,
+                intervention_note,
+                {
+                    "current_attendance": current_attendance,
+                    "target_attendance": target_attendance,
+                    "current_assignment": current_assignment,
+                    "target_assignment": target_assignment,
+                    "current_mock": current_mock,
+                    "target_mock": target_mock,
+                },
+                current_outcome,
+                predicted_outcome,
+                predicted_rows,
+            )
+            st.success("Scenario saved. It will now appear in the history and calibration sections.")
+    with action_cols[1]:
+        st.download_button(
+            "Download Counselling Sheet (PDF)",
+            build_student_counselling_sheet_pdf(
+                row,
+                scenario_name,
+                intervention_note,
+                current_outcome,
+                predicted_outcome,
+                predicted_rows,
+                recommendations,
+            ),
+            file_name=f"{slugify_name(student_name).lower()}_counselling_sheet.pdf",
+            mime="application/pdf",
+            key=f"{key_prefix}_download_counselling",
+            use_container_width=True,
+        )
+    with action_cols[2]:
+        st.download_button(
+            "Download Scenario CSV",
+            pd.DataFrame(predicted_rows).to_csv(index=False).encode("utf-8"),
+            file_name=f"{slugify_name(student_name).lower()}_scenario_forecast.csv",
+            mime="text/csv",
+            key=f"{key_prefix}_download_scenario_csv",
+            use_container_width=True,
+        )
+
+    scenario_history_df = build_student_scenario_history(row.get("Student_ID", ""))
+    st.markdown("---")
+    st.markdown("#### Saved Scenarios")
+    if scenario_history_df.empty:
+        st.info("No saved scenarios for this student yet.")
+    else:
+        st.dataframe(
+            scenario_history_df[
+                [
+                    "created_at",
+                    "scenario_name",
+                    "current_aggregate",
+                    "predicted_aggregate",
+                    "current_placement",
+                    "predicted_placement",
+                    "best_two_electives",
+                ]
+            ],
+            use_container_width=True,
+        )
+
+    calibration_df = build_scenario_calibration_df(working_df, subject_cols)
+    student_calibration_df = calibration_df[
+        calibration_df["Student_ID"].fillna("").astype(str).str.strip().eq(str(row.get("Student_ID", "")).strip())
+    ].copy() if not calibration_df.empty else pd.DataFrame()
+    st.markdown("#### Predicted vs Actual Calibration")
+    if student_calibration_df.empty:
+        st.info("Calibration will appear here after at least one scenario is saved for this student.")
+    else:
+        st.dataframe(student_calibration_df, use_container_width=True)
+
+    if predicted_outcome["placement_outlook"] != current_outcome["placement_outlook"]:
+        st.caption(f"Current placement outlook: {current_outcome['placement_outlook']}. Predicted outlook: {predicted_outcome['placement_outlook']}.")
+    render_scroll_to_top()
+
+
+# ============================================================
+# 13. ROLE-BASED PORTAL ROUTING AND APP ENTRYPOINT
+# ============================================================
+def director_portal(df, subject_cols, data_status):
+    scope_label = get_scope_label()
+    st.title(f"🌐 Director Dashboard: {scope_label}")
+    leaderboard_tab, audit_tab, predictor_tab, reports_tab, data_setup_tab = st.tabs(
+        [f"🏆 {scope_label} Leaderboard", "📋 Student Audit", "🔍 Search & Predict", "📦 Reports & Alerts", "🗂️ Data Setup"]
+    )
+
+    with leaderboard_tab:
+        render_director_dashboard(df, subject_cols)
+
+    with audit_tab:
+        render_audit_table(df, "director_audit", "district_municipal_student_audit.csv")
+
+    with predictor_tab:
+        render_student_predictor(df, subject_cols, "director_predictor")
+
+    with reports_tab:
+        render_reports_center(df, subject_cols, "Director", key_prefix="director_reports")
+        st.markdown("---")
+        render_communication_center(df, subject_cols, "director_comms")
+
+    with data_setup_tab:
+        render_director_data_setup(data_status, standalone=False, key_prefix="director_dashboard_setup")
+
+
+def render_headteacher_upload_required_screen(school):
+    sync_status = get_school_sync_status(school)
+    st.title(f"📥 Student Data Required: {school}")
+    st.write(
+        "This Headteacher account cannot open the full dashboard yet because the school has not synced any student rows. Upload the school CSV below to unlock the portal."
+    )
+    render_status_message(sync_status)
+    render_headteacher_bulk_upload(school, "headteacher_required_upload", redirect_to_login=False)
+
+
+def headteacher_portal(df, subject_cols, school):
+    st.title(f"🏫 Headteacher Portal: {school}")
+    show_portal_flash()
+    school_df = df[df["School_Name"] == school].copy()
+
+    overview_tab, upload_tab, entry_tab, predictor_tab, reports_tab = st.tabs(
+        ["📊 School Performance", "📥 Sync Student Data", "➕ Student Updates", "🔮 Student Predictor", "📦 Reports & Contact"]
+    )
+
+    with overview_tab:
+        render_school_dashboard(school_df, subject_cols)
+        st.markdown("---")
+        render_audit_table(school_df, "headteacher_audit", f"{school.replace(' ', '_').lower()}_audit.csv")
+
+    with upload_tab:
+        render_headteacher_bulk_upload(school, "headteacher_dashboard_student_upload", redirect_to_login=False)
+
+    with entry_tab:
+        manual_entry_form(df, subject_cols, school)
+
+    with predictor_tab:
+        render_manual_grade_predictor()
+        render_student_predictor(school_df, subject_cols, "headteacher_predictor")
+
+    with reports_tab:
+        render_reports_center(school_df, subject_cols, "Headteacher", school=school, key_prefix="headteacher_reports")
+        st.markdown("---")
+        render_headteacher_contact_form(school, "headteacher_contact")
+
+
+def main():
+    init_session_state()
+
+    if not st.session_state["logged_in"]:
+        login_ui()
+        return
+
+    role = st.session_state["user_role"]
+    school = st.session_state["user_school"]
+    circuit_status = get_circuit_file_status()
+    data_status = get_data_file_status()
+    df, subject_cols = load_data(show_errors=False) if data_status["ready"] else (pd.DataFrame(), [])
+
+    st.markdown('<div id="page-top"></div>', unsafe_allow_html=True)
+    render_sidebar(df, subject_cols, role, school)
+
+    if role == "Director":
+        if not circuit_status["ready"]:
+            render_director_data_setup(data_status, standalone=True, key_prefix="director_first_run_setup")
+            return
+        director_portal(df, subject_cols, data_status)
+    elif role == "Headteacher":
+        if not circuit_status["ready"]:
+            render_circuit_waiting_screen(circuit_status)
+            return
+        school_sync_status = get_school_sync_status(school)
+        if not school_sync_status["ready"]:
+            render_headteacher_upload_required_screen(school)
+            return
+        headteacher_portal(df, subject_cols, school)
+    else:
+        st.error("Unknown account role. Please contact the district/municipal administrator.")
+
+
+main()

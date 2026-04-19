@@ -1,0 +1,123 @@
+{
+    "Akatsi A JHS": {
+        "Mathematics": 3.21,
+        "English_Language": 2.82,
+        "Integrated_Science": 3.17,
+        "Social_Studies": 3.42,
+        "ICT": 3.32,
+        "RME": 3.11,
+        "BDT": 3.47,
+        "French": 3.16,
+        "Ewe": 3.36
+    },
+    "Awasive JHS": {
+        "Mathematics": 3.29,
+        "English_Language": 3.59,
+        "Integrated_Science": 3.63,
+        "Social_Studies": 3.54,
+        "ICT": 8.51,
+        "RME": 3.59,
+        "BDT": 3.41,
+        "French": 3.2,
+        "Ewe": 3.23
+    },
+    "Wlitey JHS": {
+        "Mathematics": 2.92,
+        "English_Language": 3.39,
+        "Integrated_Science": 3.57,
+        "Social_Studies": 3.78,
+        "ICT": 4.32,
+        "RME": 2.78,
+        "BDT": 3.47,
+        "French": 3.75,
+        "Ewe": 3.92
+    },
+    "Agbedrafor JHS": {
+        "Mathematics": 3.19,
+        "English_Language": 3.62,
+        "Integrated_Science": 3.38,
+        "Social_Studies": 3.51,
+        "ICT": 4.27,
+        "RME": 3.39,
+        "BDT": 3.57,
+        "French": 3.61,
+        "Ewe": 3.38
+    },
+    "Kpota JHS": {
+        "Mathematics": 3.49,
+        "English_Language": 3.9,
+        "Integrated_Science": 3.26,
+        "Social_Studies": 4.01,
+        "ICT": 4.14,
+        "RME": 3.77,
+        "BDT": 3.82,
+        "French": 3.59,
+        "Ewe": 3.67
+    },
+    "Xavi JHS": {
+        "Mathematics": 3.07,
+        "English_Language": 3.29,
+        "Integrated_Science": 2.94,
+        "Social_Studies": 2.89,
+        "ICT": 4.11,
+        "RME": 3.49,
+        "BDT": 3.48,
+        "French": 2.86,
+        "Ewe": 3.38
+    },
+    "Akatsicoe Practice JHS": {
+        "Mathematics": 3.62,
+        "English_Language": 3.61,
+        "Integrated_Science": 3.2,
+        "Social_Studies": 3.61,
+        "ICT": 4.1,
+        "RME": 3.58,
+        "BDT": 3.6,
+        "French": 3.72,
+        "Ewe": 3.77
+    },
+    "Akatsi B JHS": {
+        "Mathematics": 2.72,
+        "English_Language": 3.06,
+        "Integrated_Science": 3.2,
+        "Social_Studies": 2.64,
+        "ICT": 3.36,
+        "RME": 3.38,
+        "BDT": 2.99,
+        "French": 3.46,
+        "Ewe": 3.17
+    },
+    "Lume Ahugakope JHS": {
+        "Mathematics": 3.1,
+        "English_Language": 3.4,
+        "Integrated_Science": 3.37,
+        "Social_Studies": 3.26,
+        "ICT": 3.44,
+        "RME": 2.89,
+        "BDT": 3.0,
+        "French": 3.53,
+        "Ewe": 3.0
+    },
+    "Wute JHS": {
+        "Mathematics": 3.24,
+        "English_Language": 2.88,
+        "Integrated_Science": 2.46,
+        "Social_Studies": 3.08,
+        "ICT": 3.51,
+        "RME": 3.04,
+        "BDT": 2.72,
+        "French": 2.47,
+        "Ewe": 2.97
+    },
+    "Gefia JHS": {
+        "Mathematics": 3.96,
+        "English_Language": 3.8,
+        "Integrated_Science": 4.2,
+        "Social_Studies": 3.67,
+        "ICT": 4.3,
+        "RME": 3.92,
+        "BDT": 3.53,
+        "French": 3.81,
+        "Ewe": 3.84
+    }
+}

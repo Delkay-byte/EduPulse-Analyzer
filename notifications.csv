@@ -1,0 +1,3 @@
+notification_id,created_at,district,target_role,event_type,created_by,school,circuit,student_id,student_name,message,status
+notif-20260405223216430482-8072,2026-04-05 22:32:16 UTC,Akatsi North,Director,student_added,Pascal Dzakah,Agbedrafor JHS,Akatsi B,AGBEDRAF-F4B2-0001,Saviour Amegayie,New student added by Pascal Dzakah: Saviour Amegayie (AGBEDRAF-F4B2-0001) for Agbedrafor JHS in Akatsi B.,Read
+notif-20260405223539741834-8775,2026-04-05 22:35:39 UTC,Akatsi North,Director,student_added,Pascal Dzakah,Agbedrafor JHS,Akatsi B,AGBEDRAF-F4B2-0002,Kwame Gbodzah,New student added by Pascal Dzakah: Kwame Gbodzah (AGBEDRAF-F4B2-0002) for Agbedrafor JHS in Akatsi B.,Read
