@@ -12,7 +12,6 @@ import urllib.parse
 import zipfile
 from datetime import datetime
 from email.message import EmailMessage
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -210,6 +209,9 @@ st.set_page_config(page_title=APP_TITLE, page_icon="📊", layout="wide")
 st.markdown(
     """
     <style>
+    /* ---------------------------------------------------------
+       SIDEBAR & METRIC STYLES 
+    --------------------------------------------------------- */
     [data-testid="stSidebarUserContent"] > div:first-child {
         min-height: 100vh;
         display: flex;
@@ -298,6 +300,8 @@ st.markdown(
         font-size: 0.92rem;
         margin-bottom: 0;
     }
+
+    /* Media Queries for Mobile Responsiveness */
     @media (max-width: 768px) {
         .metric-card {
             padding: 12px;
@@ -315,32 +319,88 @@ st.markdown(
             padding: 1rem;
         }
     }
+    
+    /* ---------------------------------------------------------
+       🎓 ELITE EDUPULSE ONBOARDING EXPERIENCE
+    --------------------------------------------------------- */
+    /* Hero Section */
+    .hero-container {
+        background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+        padding: 2.5rem 2rem;
+        border-radius: 18px;
+        color: white !important;
+        margin-bottom: 1.5rem;
+    }
+    .hero-container h1, .hero-container p {
+        color: white !important;
+    }
+
+    /* Card Grid */
+    .card-grid {
+        display: flex;
+        gap: 1.5rem;
+        margin-top: 1.2rem;
+    }
+
+    /* Individual Cards */
+    .info-card {
+        flex: 1;
+        background: white !important;
+        padding: 1.5rem;
+        border-radius: 16px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        border: 1px solid #e2e8f0;
+        border-top: 5px solid #1d4ed8; /* Visual accent */
+    }
+
+    /* Text inside Cards - Explicit Colors */
+    .info-card h3 {
+        color: #0f172a !important; /* Dark Blue/Black */
+        font-size: 1.2rem;
+        font-weight: 700;
+        margin-bottom: 0.8rem;
+    }
+    .info-card ul {
+        color: #334155 !important; /* Slate Gray */
+        padding-left: 1.2rem;
+    }
+    .info-card li {
+        margin-bottom: 0.5rem;
+        font-size: 0.95rem;
+        color: #334155 !important;
+    }
     </style>
     """,
-    unsafe_allow_html=True,
+    unsafe_allow_html=True
 )
 
 
 def init_session_state():
-    defaults = {
+    """
+    Initializes required Streamlit session state variables.
+    Checks if a key exists; if not, sets it to its default value.
+    """
+    default_states = {
         "logged_in": False,
         "current_user": "",
         "user_role": "",
         "user_school": "",
         "user_district": "",
-        "latest_director_key": "",
-        "latest_registered_school": "",
-        "latest_registered_district": "",
         "auth_nav": "Login",
+        "pending_setup_role": "",
         "auth_flash_message": "",
         "auth_flash_severity": "success",
         "portal_flash_message": "",
         "portal_flash_severity": "success",
-        "pending_setup_role": "",
+        "latest_registered_school": "",
+        "latest_registered_district": "",
+        "latest_director_key": ""
     }
-    for key, value in defaults.items():
+
+    for key, default_value in default_states.items():
         if key not in st.session_state:
-            st.session_state[key] = value
+            st.session_state[key] = default_value
+
 
 
 # ============================================================
@@ -1725,6 +1785,57 @@ def render_sidebar(df, subject_cols, role, school):
 def login_ui():
     active_config = load_app_config()
     active_scope_label = active_config["district_name"] or "District/Municipal"
+    if not st.session_state.logged_in:
+        st.markdown("""
+        <div class="hero-container">
+            <h1 style="color: white !important; margin-top: 0;">🎓 Welcome to EduPulse</h1>
+            <p style="color: rgba(255,255,255,0.9) !important; font-size: 1.1rem;">
+                Follow your path below to unlock the full analytics system.
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2)
+
+    # 🏛️ DIRECTOR CARD
+    with col1:
+        st.markdown("""
+        <div class="info-card">
+            <h3>🏛️ Director Setup</h3>
+            <ol>
+                <li>Register as Director</li>
+                <li>Receive Security Code</li>
+                <li>Download Circuit Template</li>
+                <li>Upload Municipality/District Circuit Data</li>
+            </ol>
+            <p style="font-size:13px; color:#475569 !important;">
+                Enables district-wide analytics & control
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # 🏫 HEADTEACHER CARD
+    with col2:
+        st.markdown("""
+        <div class="info-card" style="border-top-color: #059669;">
+            <h3>🏫 Headteacher Setup</h3>
+            <ol>
+                <li>Register with Director Code</li>
+                <li>Download School Template</li>
+                <li>Upload Student Data</li>
+                <li>Access Dashboard</li>
+            </ol>
+            <p style="font-size:13px; color:#475569 !important;">
+                Unlock school-level insights
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    st.warning("⚠️ You must upload data before accessing dashboards")
+
+    st.write("---")
     st.title(f"🔐 {APP_TITLE}")
     menu = ["Login", "Register Director", "Register Headteacher"]
     if st.session_state.get("auth_nav") not in menu:
