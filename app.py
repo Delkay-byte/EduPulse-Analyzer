@@ -582,22 +582,73 @@ def get_backend_worksheet_name(table_key):
     return name[:99]
 
 
-@st.cache_resource
-def get_google_sheet():
+_LAST_GOOGLE_SHEETS_ERROR = ""
+
+
+def _streamlit_secret_get(key, default=None):
+    try:
+        if hasattr(st, "secrets") and st.secrets is not None and key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return default
+
+
+def resolve_google_sheet_id():
     sheet_id = os.environ.get(GOOGLE_SHEETS_ID_ENV, "").strip()
-    service_account_json = os.environ.get(GOOGLE_SERVICE_ACCOUNT_JSON_ENV, "").strip()
-    if not (sheet_id and service_account_json and gspread is not None and Credentials is not None):
+    if sheet_id:
+        return sheet_id
+    value = _streamlit_secret_get(GOOGLE_SHEETS_ID_ENV)
+    if value is not None:
+        return str(value).strip()
+    return ""
+
+
+def resolve_google_service_account_json_string():
+    raw = os.environ.get(GOOGLE_SERVICE_ACCOUNT_JSON_ENV, "").strip()
+    if raw:
+        return raw
+    value = _streamlit_secret_get(GOOGLE_SERVICE_ACCOUNT_JSON_ENV)
+    if value is not None and str(value).strip():
+        return str(value).strip()
+    gcp_block = _streamlit_secret_get("gcp_service_account")
+    if isinstance(gcp_block, dict):
+        return json.dumps(gcp_block)
+    return ""
+
+
+def get_google_sheet_last_error():
+    return _LAST_GOOGLE_SHEETS_ERROR
+
+
+def get_google_sheet():
+    global _LAST_GOOGLE_SHEETS_ERROR
+    _LAST_GOOGLE_SHEETS_ERROR = ""
+    sheet_id = resolve_google_sheet_id()
+    service_account_json = resolve_google_service_account_json_string()
+    if not sheet_id:
+        _LAST_GOOGLE_SHEETS_ERROR = "Missing Google Sheet ID. Set EDUPULSE_GOOGLE_SHEETS_ID in secrets or environment."
+        return None
+    if not service_account_json:
+        _LAST_GOOGLE_SHEETS_ERROR = (
+            "Missing service account JSON. Use either EDUPULSE_GOOGLE_SERVICE_ACCOUNT_JSON "
+            "or a [gcp_service_account] table in Streamlit secrets (type, project_id, private_key, …)."
+        )
+        return None
+    if gspread is None or Credentials is None:
+        _LAST_GOOGLE_SHEETS_ERROR = "gspread/google-auth not installed. Add gspread and google-auth to requirements."
         return None
     try:
         credentials_info = json.loads(service_account_json)
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/drive",
         ]
         credentials = Credentials.from_service_account_info(credentials_info, scopes=scopes)
         client = gspread.authorize(credentials)
         return client.open_by_key(sheet_id)
-    except Exception:
+    except Exception as exc:
+        _LAST_GOOGLE_SHEETS_ERROR = f"{type(exc).__name__}: {exc}"
         return None
 
 
@@ -703,7 +754,13 @@ def generate_security_key(district_name):
 
 
 def get_platform_owner_secret():
-    return os.environ.get(DIRECTOR_REGISTRATION_KEY_ENV, "").strip() or "BloomCore-Owner-Set-Me"
+    env_val = os.environ.get(DIRECTOR_REGISTRATION_KEY_ENV, "").strip()
+    if env_val:
+        return env_val
+    secret_val = _streamlit_secret_get(DIRECTOR_REGISTRATION_KEY_ENV)
+    if secret_val is not None and str(secret_val).strip():
+        return str(secret_val).strip()
+    return "BloomCore-Owner-Set-Me"
 
 
 def generate_director_registration_key():
