@@ -10,8 +10,10 @@ import smtplib
 import textwrap
 import urllib.parse
 import zipfile
+import zlib
 from datetime import datetime
 from email.message import EmailMessage
+from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -19,6 +21,12 @@ import plotly.express as px
 import streamlit as st
 import joblib
 from matplotlib.backends.backend_pdf import PdfPages
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+except Exception:  # pragma: no cover - optional dependency
+    gspread = None
+    Credentials = None
 
 
 # ============================================================
@@ -32,13 +40,14 @@ APP_CONFIG_FILE = "app_config.json"
 NOTIFICATIONS_FILE = "notifications.csv"
 SCENARIOS_FILE = "saved_scenarios.csv"
 CONTACTS_FILE = "contact_directory.csv"
+MANUAL_PREDICTIONS_FILE = "manual_predictions.csv"
 MODEL_FILE = "bece_models.joblib"
 CALIBRATION_FILE = "school_calibration.json"
 BRAND_IMAGE = r"C:\Users\SAVIOUR\Downloads\app_logo.png"
 FINAL_SUFFIX = "_Final_BECE"
 PLACEMENT_ORDER = ["Category A", "Category B", "Category C", "Category D/SP"]
 USERS_COLUMNS = ["username", "password", "role", "school", "district", "security_key"]
-EXPECTED_CIRCUIT_COLUMNS = ["School_Name", "Circuit"]
+EXPECTED_CIRCUIT_COLUMNS = ["School_Name", "Circuit", "School_Type"]
 NOTIFICATION_COLUMNS = [
     "notification_id",
     "created_at",
@@ -101,13 +110,81 @@ CONTACT_COLUMNS = [
     "preferred_channel",
     "updated_at",
 ]
+MANUAL_PREDICTION_COLUMNS = [
+    "prediction_id",
+    "created_at",
+    "district",
+    "school",
+    "circuit",
+    "school_type",
+    "student_id",
+    "student_name",
+    "aggregate",
+    "best_six_raw_total",
+    "placement",
+    "placement_category",
+    "created_by",
+]
+DIRECTOR_REGISTRATION_KEY_ENV = "EDUPULSE_OWNER_SECRET"
+GOOGLE_SHEETS_ID_ENV = "EDUPULSE_GOOGLE_SHEETS_ID"
+GOOGLE_SERVICE_ACCOUNT_JSON_ENV = "EDUPULSE_GOOGLE_SERVICE_ACCOUNT_JSON"
+VALID_SCHOOL_TYPES = ["Public", "Private"]
+WAEC_ACCEPTED_FIELDS = [
+    "INDEX NUMBER",
+    "NAME",
+    "GENDER",
+    "DOB",
+    "RESULTS",
+]
+WAEC_COLUMN_BOUNDARIES = {
+    "index": 390,
+    "name": 520,
+    "gender": 595,
+    "dob": 705,
+}
+SUBJECT_DISPLAY_NAMES = {
+    "Mathematics": "Mathematics",
+    "English_Language": "English Language",
+    "Integrated_Science": "Science",
+    "Social_Studies": "Social Studies",
+    "ICT": "Computing",
+    "RME": "R.M.E.",
+    "BDT": "Career Technology",
+    "French": "Creative Arts Design",
+    "Ewe": "Ewe",
+}
+MODEL_KEY_OVERRIDES = {
+    "ICT": "ICT",
+    "BDT": "BDT",
+    "French": "",
+}
+WAEC_RESULT_SUBJECT_MAP = {
+    "ENGLISH LANGUAGE": "English_Language_Final_BECE",
+    "ENGLISH LANG": "English_Language_Final_BECE",
+    "MATHEMATICS": "Mathematics_Final_BECE",
+    "SCIENCE": "Integrated_Science_Final_BECE",
+    "SOCIAL STUDIES": "Social_Studies_Final_BECE",
+    "SOCIAL STUD": "Social_Studies_Final_BECE",
+    "RME": "RME_Final_BECE",
+    "R.M.E": "RME_Final_BECE",
+    "EWE": "Ewe_Final_BECE",
+    "CAREER TECHNOLOGY": "BDT_Final_BECE",
+    "CAREER TECH": "BDT_Final_BECE",
+    "CREATIVE ARTS DESIGN": "French_Final_BECE",
+    "CA DESIGN": "French_Final_BECE",
+    "C A DESIGN": "French_Final_BECE",
+    "COMPUTING": "ICT_Final_BECE",
+}
 SUBJECT_IMPORT_ALIASES = {
     "Student_ID": ["student id", "student_id", "index number", "index_number", "candidate number", "candidate_no", "candidate id"],
     "Student_Name": ["student name", "student_name", "candidate name", "candidate_name", "full name", "name"],
     "Gender": ["gender", "sex"],
+    "Date_of_Birth": ["date of birth", "dob", "birth date", "date_of_birth"],
     "School_Name": ["school name", "school_name", "school"],
     "Circuit": ["circuit"],
+    "School_Type": ["school type", "school_type", "ownership", "public or private"],
     "Attendance_Percent": ["attendance percent", "attendance_percent", "attendance", "attendance percentage"],
+    "Official_Results_Raw": ["results", "result listing", "official results"],
     "Mathematics_Final_BECE": ["mathematics", "math", "maths", "mathematics final bece", "mathematics score", "math score"],
     "English_Language_Final_BECE": ["english language", "english", "english language final bece", "english score"],
     "Integrated_Science_Final_BECE": ["integrated science", "science", "science score", "integrated science final bece"],
@@ -122,8 +199,10 @@ EXPECTED_DATA_COLUMNS = [
     "Student_ID",
     "Student_Name",
     "Gender",
+    "Date_of_Birth",
     "School_Name",
     "Circuit",
+    "School_Type",
     "Attendance_Percent",
     "Mathematics_Assignments",
     "Mathematics_Term1_Exam",
@@ -179,9 +258,15 @@ EXPECTED_DATA_COLUMNS = [
     "Ewe_Mock1",
     "Ewe_Mock2",
     "Ewe_Final_BECE",
+    "Official_Results_Raw",
     "Math_Improvement",
     "Math_Consistency",
     "Action_Zone",
+]
+PREDICTION_TEMPLATE_COLUMNS = [
+    column
+    for column in EXPECTED_DATA_COLUMNS
+    if not column.endswith(FINAL_SUFFIX) and column not in {"Official_Results_Raw", "Math_Improvement", "Math_Consistency", "Action_Zone"}
 ]
 CORE_FINAL_SUBJECTS = [
     "Mathematics_Final_BECE",
@@ -433,6 +518,8 @@ def load_app_config():
         "district_name": "",
         "director_username": "",
         "headteacher_security_key": "",
+        "director_registration_key": "",
+        "director_registration_key_created_at": "",
         "smtp_host": "",
         "smtp_port": "587",
         "smtp_username": "",
@@ -441,14 +528,7 @@ def load_app_config():
         "smtp_use_tls": "true",
     }
 
-    if not os.path.isfile(APP_CONFIG_FILE):
-        return default_config
-
-    try:
-        with open(APP_CONFIG_FILE, "r", encoding="utf-8") as handle:
-            saved_config = json.load(handle)
-    except Exception:
-        return default_config
+    saved_config = read_app_config_record(default_config)
 
     if not isinstance(saved_config, dict):
         return default_config
@@ -463,6 +543,8 @@ def save_app_config(config):
         "district_name": str(config.get("district_name", "")).strip(),
         "director_username": str(config.get("director_username", "")).strip(),
         "headteacher_security_key": str(config.get("headteacher_security_key", "")).strip(),
+        "director_registration_key": str(config.get("director_registration_key", "")).strip(),
+        "director_registration_key_created_at": str(config.get("director_registration_key_created_at", "")).strip(),
         "smtp_host": str(config.get("smtp_host", "")).strip(),
         "smtp_port": str(config.get("smtp_port", "587")).strip() or "587",
         "smtp_username": str(config.get("smtp_username", "")).strip(),
@@ -470,8 +552,140 @@ def save_app_config(config):
         "smtp_sender_email": str(config.get("smtp_sender_email", "")).strip(),
         "smtp_use_tls": str(config.get("smtp_use_tls", "true")).strip().lower() or "true",
     }
-    with open(APP_CONFIG_FILE, "w", encoding="utf-8") as handle:
-        json.dump(safe_config, handle, indent=2)
+    write_app_config_record(safe_config)
+
+
+def normalize_school_type(value):
+    token = re.sub(r"[^a-z]", "", str(value).strip().lower())
+    if token in {"public", "gov", "government"}:
+        return "Public"
+    if token in {"private", "priv"}:
+        return "Private"
+    return ""
+
+
+def normalize_school_type_series(series):
+    return series.fillna("").astype(str).str.strip().apply(normalize_school_type)
+
+
+def summarize_invalid_school_type_values(series):
+    raw_values = series.fillna("").astype(str).str.strip()
+    canonical = raw_values.apply(normalize_school_type)
+    invalid_values = sorted(raw_values[(raw_values != "") & (canonical == "")].unique().tolist())
+    return invalid_values
+
+
+def get_backend_worksheet_name(table_key):
+    name = Path(str(table_key)).stem.upper()
+    if len(name) <= 99:
+        return name
+    return name[:99]
+
+
+@st.cache_resource
+def get_google_sheet():
+    sheet_id = os.environ.get(GOOGLE_SHEETS_ID_ENV, "").strip()
+    service_account_json = os.environ.get(GOOGLE_SERVICE_ACCOUNT_JSON_ENV, "").strip()
+    if not (sheet_id and service_account_json and gspread is not None and Credentials is not None):
+        return None
+    try:
+        credentials_info = json.loads(service_account_json)
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ]
+        credentials = Credentials.from_service_account_info(credentials_info, scopes=scopes)
+        client = gspread.authorize(credentials)
+        return client.open_by_key(sheet_id)
+    except Exception:
+        return None
+
+
+def read_table_df(table_key, columns, dtype=str):
+    sheet = get_google_sheet()
+    worksheet_name = get_backend_worksheet_name(table_key)
+    if sheet is not None:
+        try:
+            worksheet = sheet.worksheet(worksheet_name)
+        except Exception:
+            return pd.DataFrame(columns=columns)
+        try:
+            records = worksheet.get_all_records(default_blank="")
+            df = pd.DataFrame(records)
+        except Exception:
+            return pd.DataFrame(columns=columns)
+        if df.empty:
+            return pd.DataFrame(columns=columns)
+        for column in columns:
+            if column not in df.columns:
+                df[column] = ""
+        safe_df = df[columns].copy().fillna("")
+        for column in columns:
+            safe_df[column] = safe_df[column].astype(str).str.strip()
+        return safe_df
+
+    if not os.path.isfile(table_key):
+        return pd.DataFrame(columns=columns)
+    try:
+        local_df = pd.read_csv(table_key, dtype=dtype).fillna("")
+    except Exception:
+        return pd.DataFrame(columns=columns)
+    for column in columns:
+        if column not in local_df.columns:
+            local_df[column] = ""
+    safe_local_df = local_df[columns].copy()
+    for column in columns:
+        safe_local_df[column] = safe_local_df[column].astype(str).str.strip()
+    return safe_local_df
+
+
+def write_table_df(table_key, df, columns):
+    safe_df = df.copy()
+    for column in columns:
+        if column not in safe_df.columns:
+            safe_df[column] = ""
+    safe_df = safe_df[columns].fillna("")
+
+    sheet = get_google_sheet()
+    worksheet_name = get_backend_worksheet_name(table_key)
+    if sheet is not None:
+        try:
+            try:
+                worksheet = sheet.worksheet(worksheet_name)
+            except Exception:
+                worksheet = sheet.add_worksheet(title=worksheet_name, rows=max(1000, len(safe_df) + 5), cols=max(26, len(columns) + 2))
+            worksheet.clear()
+            payload = [columns] + safe_df.astype(str).values.tolist()
+            worksheet.update("A1", payload)
+            return
+        except Exception:
+            pass
+
+    safe_df.to_csv(table_key, index=False)
+
+
+def read_app_config_record(default_config):
+    config_columns = list(default_config.keys())
+    config_df = read_table_df(APP_CONFIG_FILE, config_columns)
+    if not config_df.empty:
+        return config_df.tail(1).iloc[0].to_dict()
+    if os.path.isfile(APP_CONFIG_FILE):
+        try:
+            with open(APP_CONFIG_FILE, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except Exception:
+            return default_config
+    return default_config
+
+
+def write_app_config_record(config):
+    config_columns = list(config.keys())
+    write_table_df(APP_CONFIG_FILE, pd.DataFrame([config], columns=config_columns), config_columns)
+    try:
+        with open(APP_CONFIG_FILE, "w", encoding="utf-8") as handle:
+            json.dump(config, handle, indent=2)
+    except Exception:
+        pass
 
 
 def get_scope_label():
@@ -488,23 +702,48 @@ def generate_security_key(district_name):
     return f"{slugify_name(district_name)}-{random.randint(1000, 9999)}"
 
 
+def get_platform_owner_secret():
+    return os.environ.get(DIRECTOR_REGISTRATION_KEY_ENV, "").strip() or "BloomCore-Owner-Set-Me"
+
+
+def generate_director_registration_key():
+    return f"DIRECTOR-{random.randint(100000, 999999)}"
+
+
+def set_director_registration_key(new_key):
+    config = load_app_config()
+    config["director_registration_key"] = str(new_key).strip()
+    config["director_registration_key_created_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    save_app_config(config)
+
+
+def consume_director_registration_key():
+    config = load_app_config()
+    config["director_registration_key"] = ""
+    config["director_registration_key_created_at"] = ""
+    save_app_config(config)
+
+
+def director_registration_key_is_valid(input_key):
+    config = load_app_config()
+    return bool(str(input_key).strip() and str(input_key).strip() == str(config.get("director_registration_key", "")).strip())
+
+
 def activate_director_context(username, district_name, security_key):
-    save_app_config(
+    config = load_app_config()
+    config.update(
         {
             "district_name": district_name,
             "director_username": username,
             "headteacher_security_key": security_key,
         }
     )
+    save_app_config(config)
 
 
 def load_users_df():
-    if not os.path.isfile(USERS_FILE):
-        return pd.DataFrame(columns=USERS_COLUMNS)
-
-    try:
-        users_df = pd.read_csv(USERS_FILE, dtype=str).fillna("")
-    except Exception:
+    users_df = read_table_df(USERS_FILE, USERS_COLUMNS)
+    if users_df.empty:
         return pd.DataFrame(columns=USERS_COLUMNS)
 
     for column in USERS_COLUMNS:
@@ -524,7 +763,7 @@ def save_users_df(users_df):
         if column not in normalized_df.columns:
             normalized_df[column] = ""
     normalized_df = normalized_df[USERS_COLUMNS].fillna("")
-    normalized_df.to_csv(USERS_FILE, index=False)
+    write_table_df(USERS_FILE, normalized_df, USERS_COLUMNS)
 
 
 def load_users():
@@ -536,12 +775,8 @@ def load_users():
 # 4. NOTIFICATIONS, SAVED SCENARIOS, AND CONTACT DIRECTORY
 # ============================================================
 def load_notifications_df():
-    if not os.path.isfile(NOTIFICATIONS_FILE):
-        return pd.DataFrame(columns=NOTIFICATION_COLUMNS)
-
-    try:
-        notifications_df = pd.read_csv(NOTIFICATIONS_FILE, dtype=str).fillna("")
-    except Exception:
+    notifications_df = read_table_df(NOTIFICATIONS_FILE, NOTIFICATION_COLUMNS)
+    if notifications_df.empty:
         return pd.DataFrame(columns=NOTIFICATION_COLUMNS)
 
     for column in NOTIFICATION_COLUMNS:
@@ -560,16 +795,12 @@ def save_notifications_df(notifications_df):
         if column not in safe_df.columns:
             safe_df[column] = ""
     safe_df = safe_df[NOTIFICATION_COLUMNS].fillna("")
-    safe_df.to_csv(NOTIFICATIONS_FILE, index=False)
+    write_table_df(NOTIFICATIONS_FILE, safe_df, NOTIFICATION_COLUMNS)
 
 
 def load_scenarios_df():
-    if not os.path.isfile(SCENARIOS_FILE):
-        return pd.DataFrame(columns=SCENARIO_COLUMNS)
-
-    try:
-        scenarios_df = pd.read_csv(SCENARIOS_FILE, dtype=str).fillna("")
-    except Exception:
+    scenarios_df = read_table_df(SCENARIOS_FILE, SCENARIO_COLUMNS)
+    if scenarios_df.empty:
         return pd.DataFrame(columns=SCENARIO_COLUMNS)
 
     for column in SCENARIO_COLUMNS:
@@ -587,16 +818,12 @@ def save_scenarios_df(scenarios_df):
         if column not in safe_df.columns:
             safe_df[column] = ""
     safe_df = safe_df[SCENARIO_COLUMNS].fillna("")
-    safe_df.to_csv(SCENARIOS_FILE, index=False)
+    write_table_df(SCENARIOS_FILE, safe_df, SCENARIO_COLUMNS)
 
 
 def load_contacts_df():
-    if not os.path.isfile(CONTACTS_FILE):
-        return pd.DataFrame(columns=CONTACT_COLUMNS)
-
-    try:
-        contacts_df = pd.read_csv(CONTACTS_FILE, dtype=str).fillna("")
-    except Exception:
+    contacts_df = read_table_df(CONTACTS_FILE, CONTACT_COLUMNS)
+    if contacts_df.empty:
         return pd.DataFrame(columns=CONTACT_COLUMNS)
 
     for column in CONTACT_COLUMNS:
@@ -614,7 +841,59 @@ def save_contacts_df(contacts_df):
         if column not in safe_df.columns:
             safe_df[column] = ""
     safe_df = safe_df[CONTACT_COLUMNS].fillna("")
-    safe_df.to_csv(CONTACTS_FILE, index=False)
+    write_table_df(CONTACTS_FILE, safe_df, CONTACT_COLUMNS)
+
+
+def load_manual_predictions_df():
+    manual_df = read_table_df(MANUAL_PREDICTIONS_FILE, MANUAL_PREDICTION_COLUMNS)
+    if manual_df.empty:
+        return pd.DataFrame(columns=MANUAL_PREDICTION_COLUMNS)
+
+    for column in MANUAL_PREDICTION_COLUMNS:
+        if column not in manual_df.columns:
+            manual_df[column] = ""
+    return manual_df[MANUAL_PREDICTION_COLUMNS].copy()
+
+
+def save_manual_predictions_df(manual_df):
+    safe_df = manual_df.copy()
+    for column in MANUAL_PREDICTION_COLUMNS:
+        if column not in safe_df.columns:
+            safe_df[column] = ""
+    safe_df = safe_df[MANUAL_PREDICTION_COLUMNS].fillna("")
+    write_table_df(MANUAL_PREDICTIONS_FILE, safe_df, MANUAL_PREDICTION_COLUMNS)
+
+
+def save_manual_prediction(prediction_row):
+    manual_df = load_manual_predictions_df()
+    record_df = pd.DataFrame([prediction_row], columns=MANUAL_PREDICTION_COLUMNS)
+    manual_df = pd.concat([manual_df, record_df], ignore_index=True)
+    save_manual_predictions_df(manual_df)
+
+
+def build_manual_prediction_summary_df(district=""):
+    manual_df = load_manual_predictions_df()
+    if manual_df.empty:
+        return manual_df
+
+    if district:
+        manual_df = manual_df[
+            manual_df["district"].fillna("").astype(str).str.strip().eq(str(district).strip())
+        ].copy()
+
+    if manual_df.empty:
+        return manual_df
+
+    manual_df["created_at"] = manual_df["created_at"].fillna("").astype(str).str.strip()
+    manual_df["dedupe_key"] = np.where(
+        manual_df["student_id"].fillna("").astype(str).str.strip() != "",
+        manual_df["school"].fillna("").astype(str).str.strip() + "::" + manual_df["student_id"].fillna("").astype(str).str.strip(),
+        manual_df["school"].fillna("").astype(str).str.strip() + "::" + manual_df["student_name"].fillna("").astype(str).str.strip(),
+    )
+    manual_df = manual_df.sort_values("created_at", ascending=False).drop_duplicates(subset=["dedupe_key"], keep="first")
+    for numeric_column in ["aggregate", "best_six_raw_total"]:
+        manual_df[numeric_column] = pd.to_numeric(manual_df[numeric_column], errors="coerce")
+    return manual_df.drop(columns=["dedupe_key"], errors="ignore").reset_index(drop=True)
 
 
 def upsert_contact(contact_row):
@@ -704,11 +983,11 @@ def mark_notifications_as_read(target_role="Director", district=""):
 
 
 def initialize_empty_student_dataset():
-    pd.DataFrame(columns=EXPECTED_DATA_COLUMNS).to_csv(DATA_FILE, index=False)
+    write_table_df(DATA_FILE, pd.DataFrame(columns=EXPECTED_DATA_COLUMNS), EXPECTED_DATA_COLUMNS)
 
 
 def initialize_empty_circuit_dataset():
-    pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS).to_csv(CIRCUITS_FILE, index=False)
+    write_table_df(CIRCUITS_FILE, pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS), EXPECTED_CIRCUIT_COLUMNS)
 
 
 def register_user(username, password, role, school, district="", security_key=""):
@@ -763,36 +1042,29 @@ def register_user(username, password, role, school, district="", security_key=""
 # 5. CIRCUIT MAPPING, CSV TEMPLATES, AND DATASET VALIDATION
 # ============================================================
 def load_circuit_lookup():
-    if not os.path.isfile(CIRCUITS_FILE):
+    mapping_df = load_circuit_mapping_df()
+    if mapping_df.empty:
         return {}
-
-    try:
-        mapping_df = pd.read_csv(CIRCUITS_FILE, dtype=str).fillna("")
-    except Exception:
-        return {}
-
-    mapping_df.columns = [str(column).replace("\ufeff", "").strip() for column in mapping_df.columns]
-    columns_valid, _ = validate_circuit_columns(mapping_df.columns.tolist())
-    if not columns_valid:
-        return {}
-
-    mapping_df = clean_uploaded_dataframe(mapping_df)
-    mapping_df["School_Name"] = mapping_df["School_Name"].astype(str).str.strip()
-    mapping_df["Circuit"] = mapping_df["Circuit"].astype(str).str.strip()
-    mapping_df = mapping_df[mapping_df["School_Name"] != ""]
     return pd.Series(mapping_df["Circuit"].values, index=mapping_df["School_Name"]).to_dict()
 
 
+def load_school_profile_lookup():
+    mapping_df = load_circuit_mapping_df()
+    if mapping_df.empty:
+        return {}
+    mapping_df = mapping_df.drop_duplicates(subset=["School_Name"], keep="last")
+    return mapping_df.set_index("School_Name")[["Circuit", "School_Type"]].to_dict("index")
+
+
 def load_circuit_mapping_df():
-    if not os.path.isfile(CIRCUITS_FILE):
+    mapping_df = read_table_df(CIRCUITS_FILE, EXPECTED_CIRCUIT_COLUMNS)
+    if mapping_df.empty:
         return pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS)
 
-    try:
-        mapping_df = pd.read_csv(CIRCUITS_FILE, dtype=str).fillna("")
-    except Exception:
-        return pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS)
+    mapping_df.columns = [str(column).replace("﻿", "").strip() for column in mapping_df.columns]
+    if "School_Type" not in mapping_df.columns:
+        mapping_df["School_Type"] = ""
 
-    mapping_df.columns = [str(column).replace("\ufeff", "").strip() for column in mapping_df.columns]
     columns_valid, _ = validate_circuit_columns(mapping_df.columns.tolist())
     if not columns_valid:
         return pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS)
@@ -800,6 +1072,8 @@ def load_circuit_mapping_df():
     mapping_df = clean_uploaded_dataframe(mapping_df)
     mapping_df["School_Name"] = mapping_df["School_Name"].astype(str).str.strip()
     mapping_df["Circuit"] = mapping_df["Circuit"].astype(str).str.strip()
+    mapping_df["School_Type"] = normalize_school_type_series(mapping_df["School_Type"])
+    mapping_df = mapping_df[mapping_df["School_Type"] != ""]
     mapping_df = mapping_df[(mapping_df["School_Name"] != "") & (mapping_df["Circuit"] != "")]
     return mapping_df[EXPECTED_CIRCUIT_COLUMNS].drop_duplicates().reset_index(drop=True)
 
@@ -853,17 +1127,25 @@ def get_circuit_file_status():
     }
 
 
-def validate_data_columns(columns):
-    normalized_columns = [str(column).replace("\ufeff", "").strip() for column in columns]
-    if normalized_columns == EXPECTED_DATA_COLUMNS:
-        return True, "Column structure matches the required template."
+def validate_live_dataset_columns(columns):
+    normalized_columns = [str(column).replace("﻿", "").strip() for column in columns]
+    required_columns = ["Student_ID", "Student_Name", "School_Name"]
+    missing_required = [column for column in required_columns if column not in normalized_columns]
+    if missing_required:
+        return False, "The active dataset is missing required columns: " + ", ".join(missing_required)
+    return True, "Live dataset columns are readable."
 
-    if sorted(normalized_columns) == sorted(EXPECTED_DATA_COLUMNS) and len(normalized_columns) == len(EXPECTED_DATA_COLUMNS):
-        return True, "Column names match the required template."
 
-    missing_columns = [column for column in EXPECTED_DATA_COLUMNS if column not in normalized_columns]
-    extra_columns = [column for column in normalized_columns if column not in EXPECTED_DATA_COLUMNS]
+def validate_prediction_template_columns(columns):
+    normalized_columns = [str(column).replace("﻿", "").strip() for column in columns]
+    if normalized_columns == PREDICTION_TEMPLATE_COLUMNS:
+        return True, "Column structure matches the required prediction template."
 
+    if sorted(normalized_columns) == sorted(PREDICTION_TEMPLATE_COLUMNS) and len(normalized_columns) == len(PREDICTION_TEMPLATE_COLUMNS):
+        return True, "Column names match the required prediction template."
+
+    missing_columns = [column for column in PREDICTION_TEMPLATE_COLUMNS if column not in normalized_columns]
+    extra_columns = [column for column in normalized_columns if column not in PREDICTION_TEMPLATE_COLUMNS]
     message_parts = []
     if missing_columns:
         message_parts.append("Missing columns: " + ", ".join(missing_columns))
@@ -873,28 +1155,30 @@ def validate_data_columns(columns):
         message_parts.append(
             "The header names are correct but the column order was changed. Please use the template without editing the header row."
         )
-
     return False, "CSV template mismatch. " + " ".join(message_parts)
 
 
 def validate_circuit_columns(columns):
-    normalized_columns = [str(column).replace("\ufeff", "").strip() for column in columns]
+    normalized_columns = [str(column).replace("﻿", "").strip() for column in columns]
+    legacy_columns = ["School_Name", "Circuit"]
     if normalized_columns == EXPECTED_CIRCUIT_COLUMNS:
         return True, "Circuit template columns match the required template."
+    if normalized_columns == legacy_columns:
+        return False, "School_Type is required and must be either Public or Private for each school row."
 
-    missing_columns = [column for column in EXPECTED_CIRCUIT_COLUMNS if column not in normalized_columns]
+    missing_columns = [column for column in legacy_columns if column not in normalized_columns]
     extra_columns = [column for column in normalized_columns if column not in EXPECTED_CIRCUIT_COLUMNS]
-
     message_parts = []
     if missing_columns:
         message_parts.append("Missing columns: " + ", ".join(missing_columns))
     if extra_columns:
         message_parts.append("Unexpected columns: " + ", ".join(extra_columns))
-    if not missing_columns and not extra_columns:
+    if "School_Type" not in normalized_columns:
+        message_parts.append("School_Type is missing. Use only Public or Private.")
+    if not message_parts:
         message_parts.append(
             "The header names are correct but the column order was changed. Please use the template without editing the header row."
         )
-
     return False, "Circuit CSV template mismatch. " + " ".join(message_parts)
 
 
@@ -903,7 +1187,10 @@ def build_template_csv_bytes(columns):
     writer = csv.writer(output)
     writer.writerow(columns)
     for _ in range(3):
-        writer.writerow([""] * len(columns))
+        row = [""] * len(columns)
+        if "School_Type" in columns:
+            row[columns.index("School_Type")] = "Public"
+        writer.writerow(row)
     footer_row = [""] * len(columns)
     footer_row[0] = BLOOMCORE_FOOTER_TEXT
     writer.writerow(footer_row)
@@ -917,16 +1204,12 @@ def build_school_student_id_prefix(school):
 
 
 def get_next_school_student_id_number(school, prefix):
-    if not os.path.isfile(DATA_FILE):
-        return 1
-
-    try:
-        student_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str}).fillna("")
-    except Exception:
+    student_df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
+    if student_df.empty:
         return 1
 
     student_df.columns = [str(column).replace("\ufeff", "").strip() for column in student_df.columns]
-    columns_valid, _ = validate_data_columns(student_df.columns.tolist())
+    columns_valid, _ = validate_live_dataset_columns(student_df.columns.tolist())
     if not columns_valid or "Student_ID" not in student_df.columns or "School_Name" not in student_df.columns:
         return 1
 
@@ -1018,25 +1301,27 @@ def assign_missing_school_student_ids(student_df, school, existing_school_df=Non
     return assigned_df, missing_count
 
 
-def build_headteacher_student_template_bytes(school, circuit=""):
+def build_headteacher_student_template_bytes(school, circuit="", school_type=""):
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(EXPECTED_DATA_COLUMNS)
+    writer.writerow(PREDICTION_TEMPLATE_COLUMNS)
 
-    student_id_index = EXPECTED_DATA_COLUMNS.index("Student_ID")
-    school_index = EXPECTED_DATA_COLUMNS.index("School_Name")
-    circuit_index = EXPECTED_DATA_COLUMNS.index("Circuit")
+    student_id_index = PREDICTION_TEMPLATE_COLUMNS.index("Student_ID")
+    school_index = PREDICTION_TEMPLATE_COLUMNS.index("School_Name")
+    circuit_index = PREDICTION_TEMPLATE_COLUMNS.index("Circuit")
+    school_type_index = PREDICTION_TEMPLATE_COLUMNS.index("School_Type")
     student_id_prefix = build_school_student_id_prefix(school)
     next_number = get_next_school_student_id_number(school, student_id_prefix)
 
     for offset in range(HEADTEACHER_TEMPLATE_ROWS):
-        row = [""] * len(EXPECTED_DATA_COLUMNS)
+        row = [""] * len(PREDICTION_TEMPLATE_COLUMNS)
         row[student_id_index] = f"{student_id_prefix}-{next_number + offset:04d}"
         row[school_index] = school
         row[circuit_index] = circuit
+        row[school_type_index] = school_type or "Not Specified"
         writer.writerow(row)
 
-    footer_row = [""] * len(EXPECTED_DATA_COLUMNS)
+    footer_row = [""] * len(PREDICTION_TEMPLATE_COLUMNS)
     footer_row[0] = BLOOMCORE_FOOTER_TEXT
     writer.writerow(footer_row)
     return output.getvalue().encode("utf-8")
@@ -1057,57 +1342,19 @@ def clean_uploaded_dataframe(df):
 
 
 def get_data_file_status():
-    if not os.path.isfile(DATA_FILE):
+    data_df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
+    if data_df.empty:
         return {
             "ready": False,
             "severity": "info",
             "message": "No active student dataset has been synced yet. Headteachers will upload their own school CSV files after the Director loads the circuits map.",
         }
-
-    if os.path.getsize(DATA_FILE) == 0:
-        return {
-            "ready": False,
-            "severity": "warning",
-            "message": "The active student dataset file is empty. Ask the relevant Headteacher to sync a filled school CSV.",
-        }
-
-    try:
-        header_df = pd.read_csv(DATA_FILE, nrows=0)
-    except pd.errors.EmptyDataError:
-        return {
-            "ready": False,
-            "severity": "warning",
-            "message": "The active CSV file has no readable header row. Upload a fresh template-based file.",
-        }
-    except Exception as exc:
-        return {
-            "ready": False,
-            "severity": "error",
-            "message": f"The active CSV file could not be opened: {exc}",
-        }
-
-    columns_valid, column_message = validate_data_columns(header_df.columns.tolist())
+    columns_valid, column_message = validate_live_dataset_columns(data_df.columns.tolist())
     if not columns_valid:
         return {
             "ready": False,
             "severity": "error",
             "message": column_message,
-        }
-
-    try:
-        data_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
-    except Exception as exc:
-        return {
-            "ready": False,
-            "severity": "error",
-            "message": f"The active CSV file could not be fully read: {exc}",
-        }
-
-    if data_df.empty:
-        return {
-            "ready": False,
-            "severity": "warning",
-            "message": "The student dataset file is present, but no school has synced student rows yet.",
         }
 
     return {
@@ -1128,7 +1375,8 @@ def get_school_sync_status(school):
             "message": "No school was attached to this Headteacher account.",
         }
 
-    if not os.path.isfile(DATA_FILE):
+    student_df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
+    if student_df.empty:
         return {
             "ready": False,
             "severity": "info",
@@ -1136,18 +1384,8 @@ def get_school_sync_status(school):
             "message": f"No student dataset has been synced yet for {school}. Upload the school CSV first.",
         }
 
-    try:
-        student_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str}).fillna("")
-    except Exception as exc:
-        return {
-            "ready": False,
-            "severity": "error",
-            "rows": 0,
-            "message": f"The active student dataset could not be read for {school}: {exc}",
-        }
-
     student_df.columns = [str(column).replace("\ufeff", "").strip() for column in student_df.columns]
-    columns_valid, column_message = validate_data_columns(student_df.columns.tolist())
+    columns_valid, column_message = validate_live_dataset_columns(student_df.columns.tolist())
     if not columns_valid:
         return {
             "ready": False,
@@ -1242,29 +1480,33 @@ def load_data(show_errors=True):
         return pd.DataFrame(), []
 
     try:
-        df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+        df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
     except Exception as exc:
         st.error(f"Critical data error: {exc}")
         return pd.DataFrame(), []
 
-    df.columns = [str(column).replace("\ufeff", "").strip() for column in df.columns]
+    df = clean_uploaded_dataframe(df)
+    for column in EXPECTED_DATA_COLUMNS:
+        if column not in df.columns:
+            df[column] = pd.NA
+    df = df[EXPECTED_DATA_COLUMNS].copy()
 
-    for column in ["Student_ID", "Student_Name", "School_Name", "Gender", "Circuit", "Action_Zone"]:
+    for column in ["Student_ID", "Student_Name", "Gender", "Date_of_Birth", "School_Name", "Circuit", "School_Type", "Action_Zone"]:
         if column in df.columns:
             df[column] = df[column].fillna("").astype(str).str.strip()
             df.loc[df[column].isin(["nan", "None"]), column] = ""
 
-    circuit_lookup = load_circuit_lookup()
+    school_profile_lookup = load_school_profile_lookup()
     if "School_Name" in df.columns:
-        existing_circuit = (
-            df["Circuit"].fillna("").astype(str).str.strip()
-            if "Circuit" in df.columns
-            else pd.Series("", index=df.index, dtype="object")
-        )
-        existing_circuit = existing_circuit.mask(existing_circuit.eq(""), pd.NA)
-        mapped_circuit = df["School_Name"].map(circuit_lookup)
-        df["Circuit"] = existing_circuit.fillna(mapped_circuit).fillna(df["School_Name"])
+        mapped_circuits = df["School_Name"].map(lambda school: school_profile_lookup.get(school, {}).get("Circuit", ""))
+        mapped_school_types = df["School_Name"].map(lambda school: school_profile_lookup.get(school, {}).get("School_Type", ""))
+        df["Circuit"] = df["Circuit"].mask(df["Circuit"].eq(""), mapped_circuits).fillna(df["School_Name"])
+        df["School_Type"] = df["School_Type"].mask(df["School_Type"].eq(""), mapped_school_types).fillna("Not Specified")
         df["Circuit"] = df["Circuit"].fillna("").astype(str).str.strip()
+        df["School_Type"] = normalize_school_type_series(df["School_Type"])
+
+    if "Action_Zone" in df.columns:
+        df["Action_Zone"] = df["Action_Zone"].apply(normalize_action_zone)
 
     subject_cols = [column for column in df.columns if column.endswith(FINAL_SUFFIX)]
 
@@ -1343,7 +1585,8 @@ def normalize_gender(value):
 
 
 def format_subject_name(subject_col):
-    return subject_col.replace(FINAL_SUFFIX, "").replace("_", " ")
+    prefix = subject_col.replace(FINAL_SUFFIX, "")
+    return SUBJECT_DISPLAY_NAMES.get(prefix, prefix.replace("_", " "))
 
 
 def is_core_subject(subject_col):
@@ -1369,14 +1612,27 @@ def average_row_values(row, columns, default):
     return default
 
 
+def normalize_action_zone(value):
+    text = str(value).strip().upper()
+    if "FLYER" in text:
+        return "FLYER"
+    if "DIAMOND" in text:
+        return "DIAMOND"
+    if "STEADY" in text:
+        return "STEADY"
+    if "CRITICAL" in text:
+        return "CRITICAL"
+    return str(value).strip()
+
+
 def action_zone_from_average(score):
     if score >= 70:
-        return "1. FLYER"
+        return "FLYER"
     if score >= 60:
-        return "2. DIAMOND"
+        return "DIAMOND"
     if score >= 50:
-        return "3. STEADY"
-    return "4. CRITICAL"
+        return "STEADY"
+    return "CRITICAL"
 
 
 # ============================================================
@@ -1398,7 +1654,8 @@ def get_subject_prefix(subject_col):
 
 
 def get_subject_model_key(subject_col):
-    return get_subject_prefix(subject_col)
+    prefix = get_subject_prefix(subject_col)
+    return MODEL_KEY_OVERRIDES.get(prefix, prefix)
 
 
 def get_subject_source_columns(subject_col):
@@ -1654,6 +1911,8 @@ def build_aggregate_dataframe(df, subject_cols):
         }
         if "Gender" in df.columns:
             row["Gender"] = normalize_gender(student_row.get("Gender", ""))
+        if "School_Type" in df.columns:
+            row["School_Type"] = str(student_row.get("School_Type", "Not Specified")).strip() or "Not Specified"
         rows.append(row)
 
     return pd.DataFrame(rows)
@@ -1911,10 +2170,33 @@ def login_ui():
             )
 
     elif choice == "Register Director":
-        st.title("📝 Director Registration")
+        st.title("???? Director Registration")
         st.write(
-            "Create the Director account for a new district or municipality. A district-based security key will be generated automatically for Headteachers to use during registration."
+            "Create the Director account for a new district or municipality. Each Director registration now requires a one-time BloomCore access code from the platform owner, and that code expires immediately after use."
         )
+
+        with st.expander("Platform Owner: Generate One-Time Director Access Code"):
+            st.caption(
+                "Use your private owner passphrase to generate a one-time code for the next Director registration. Set the environment variable EDUPULSE_OWNER_SECRET in production so only you can generate these codes."
+            )
+            owner_secret = st.text_input("Owner Passphrase", type="password", key="owner_director_secret")
+            if st.button("Generate Director Access Code", key="generate_director_access_code"):
+                if owner_secret.strip() != get_platform_owner_secret():
+                    st.error("Invalid owner passphrase.")
+                else:
+                    new_director_code = generate_director_registration_key()
+                    set_director_registration_key(new_director_code)
+                    st.session_state["auth_flash_message"] = f"New one-time Director access code generated: {new_director_code}"
+                    st.session_state["auth_flash_severity"] = "success"
+                    st.rerun()
+
+        if active_config["director_registration_key"]:
+            st.info(
+                f"Active Director access code: {active_config['director_registration_key']}"
+                + (f" | Generated: {active_config['director_registration_key_created_at']}" if active_config['director_registration_key_created_at'] else "")
+            )
+        else:
+            st.warning("No unused Director access code is currently active. Generate one before the next district can register.")
 
         if active_config["district_name"]:
             st.info(
@@ -1922,13 +2204,16 @@ def login_ui():
             )
 
         with st.form("director_registration_form"):
+            director_access_code = st.text_input("BloomCore Director Access Code", type="password")
             district_name = st.text_input("District/Municipal Name")
             username = st.text_input("Director Username")
             password = st.text_input("Password", type="password")
             confirm_password = st.text_input("Confirm Password", type="password")
 
             if st.form_submit_button("Create Director Account"):
-                if password != confirm_password:
+                if not director_registration_key_is_valid(director_access_code):
+                    st.error("The Director access code is invalid or has already been used.")
+                elif password != confirm_password:
                     st.error("Passwords do not match.")
                 else:
                     security_key = generate_security_key(district_name)
@@ -1941,6 +2226,7 @@ def login_ui():
                             district=district_name,
                             security_key=security_key,
                         )
+                        consume_director_registration_key()
                         activate_director_context(result["username"], result["district"], result["security_key"])
                         initialize_empty_circuit_dataset()
                         initialize_empty_student_dataset()
@@ -2032,21 +2318,38 @@ def prepare_student_upload_df(uploaded_df):
             cleaned_df[column] = pd.NA
 
     cleaned_df = cleaned_df[EXPECTED_DATA_COLUMNS].copy()
-    for column in ["Student_ID", "Student_Name", "School_Name", "Gender", "Circuit", "Action_Zone"]:
+    for column in ["Student_ID", "Student_Name", "Gender", "Date_of_Birth", "School_Name", "Circuit", "School_Type", "Action_Zone", "Official_Results_Raw"]:
         cleaned_df[column] = cleaned_df[column].fillna("").astype(str).str.strip()
         cleaned_df.loc[cleaned_df[column].isin(["nan", "None"]), column] = ""
 
-    circuit_lookup = load_circuit_lookup()
-    if circuit_lookup:
-        mapped_circuit = cleaned_df["School_Name"].map(circuit_lookup)
+    school_profile_lookup = load_school_profile_lookup()
+    if school_profile_lookup:
+        mapped_circuit = cleaned_df["School_Name"].map(lambda school: school_profile_lookup.get(school, {}).get("Circuit", ""))
+        mapped_school_type = cleaned_df["School_Name"].map(lambda school: school_profile_lookup.get(school, {}).get("School_Type", ""))
         cleaned_df["Circuit"] = cleaned_df["Circuit"].mask(cleaned_df["Circuit"].eq(""), pd.NA)
+        cleaned_df["School_Type"] = cleaned_df["School_Type"].mask(cleaned_df["School_Type"].eq(""), pd.NA)
         cleaned_df["Circuit"] = cleaned_df["Circuit"].fillna(mapped_circuit).fillna("")
+        cleaned_df["School_Type"] = cleaned_df["School_Type"].fillna(mapped_school_type).fillna("")
+    original_school_type_series = cleaned_df["School_Type"].copy()
+    cleaned_df["School_Type"] = normalize_school_type_series(cleaned_df["School_Type"])
+    invalid_school_types = summarize_invalid_school_type_values(original_school_type_series)
+    if invalid_school_types:
+        raise ValueError(
+            "School_Type must be Public or Private. Invalid values detected: "
+            + ", ".join(invalid_school_types[:10])
+            + ("..." if len(invalid_school_types) > 10 else "")
+        )
+    missing_school_type_mask = cleaned_df["School_Type"].fillna("").astype(str).str.strip().eq("")
+    if missing_school_type_mask.any():
+        raise ValueError(
+            "School_Type is required for every row and must be Public or Private. "
+            "Please update the circuits setup for schools with missing type."
+        )
 
-    # Drop untouched template rows where only prefilled values remain.
     meaningful_columns = [
         column
         for column in EXPECTED_DATA_COLUMNS
-        if column not in {"Student_ID", "School_Name", "Circuit"}
+        if column not in {"Student_ID", "School_Name", "Circuit", "School_Type"}
     ]
     meaningful_mask = pd.Series(False, index=cleaned_df.index)
     for column in meaningful_columns:
@@ -2054,11 +2357,11 @@ def prepare_student_upload_df(uploaded_df):
             meaningful_mask = meaningful_mask | cleaned_df[column].fillna("").astype(str).str.strip().ne("")
         else:
             meaningful_mask = meaningful_mask | cleaned_df[column].notna()
-    cleaned_df = cleaned_df[
-        meaningful_mask
-    ].copy()
+    cleaned_df = cleaned_df[meaningful_mask].copy()
+    if cleaned_df.empty:
+        return cleaned_df
 
-    return cleaned_df
+    return populate_provisional_final_scores(cleaned_df)
 
 
 def write_dataframe_to_csv(df, path, columns):
@@ -2067,7 +2370,45 @@ def write_dataframe_to_csv(df, path, columns):
         if column not in safe_df.columns:
             safe_df[column] = pd.NA
     safe_df = safe_df[columns]
-    safe_df.to_csv(path, index=False)
+    write_table_df(path, safe_df, columns)
+
+
+def populate_provisional_final_scores(student_df):
+    if student_df.empty:
+        return student_df.copy()
+
+    enriched_df = student_df.copy()
+    model_bundle = get_live_ml_bundle()
+    final_subject_cols = [column for column in EXPECTED_DATA_COLUMNS if column.endswith(FINAL_SUFFIX)]
+
+    for index, row in enriched_df.iterrows():
+        final_scores = []
+        for subject_col in final_subject_cols:
+            subject_sources = get_subject_source_columns(subject_col)
+            existing_final = pd.to_numeric(pd.Series([row.get(subject_col)]), errors="coerce").iloc[0]
+            source_values = pd.to_numeric(
+                pd.Series([row.get(subject_sources[suffix]) for suffix in ["assignments", "term1", "term2", "mock1", "mock2"]]),
+                errors="coerce",
+            )
+            has_source_data = source_values.notna().any()
+            if pd.isna(existing_final) and has_source_data:
+                predicted_score = predict_subject_score_ml(row, subject_col, model_bundle)["predicted_score"]
+                enriched_df.at[index, subject_col] = round(predicted_score, 1)
+                existing_final = predicted_score
+            if pd.notna(existing_final):
+                final_scores.append(float(existing_final))
+
+        math_mock1 = safe_float(row.get("Mathematics_Mock1"), np.nan)
+        math_mock2 = safe_float(row.get("Mathematics_Mock2"), np.nan)
+        math_assignment = safe_float(row.get("Mathematics_Assignments"), np.nan)
+        if not pd.isna(math_mock1) and not pd.isna(math_mock2):
+            enriched_df.at[index, "Math_Improvement"] = round(float(math_mock2 - math_mock1), 1)
+        if not pd.isna(math_assignment) and not pd.isna(math_mock2):
+            enriched_df.at[index, "Math_Consistency"] = round(float(math_assignment - math_mock2), 1)
+        if final_scores:
+            enriched_df.at[index, "Action_Zone"] = action_zone_from_average(float(np.mean(final_scores)))
+
+    return enriched_df
 
 
 def coerce_score_series(series):
@@ -2077,6 +2418,285 @@ def coerce_score_series(series):
     grade_mask = numeric_series.between(1, 9, inclusive="both")
     numeric_series.loc[grade_mask] = numeric_series.loc[grade_mask].round().astype(int).apply(grade_to_score)
     return numeric_series
+
+
+def decode_pdf_stream_bytes(object_bytes):
+    stream_match = re.search(rb"stream\r?\n(.*?)\r?\nendstream", object_bytes, re.S)
+    if not stream_match:
+        return b""
+    stream_bytes = stream_match.group(1)
+    if b"/FlateDecode" in object_bytes:
+        try:
+            return zlib.decompress(stream_bytes)
+        except Exception:
+            return b""
+    return stream_bytes
+
+
+def build_pdf_object_map(pdf_bytes):
+    return {int(object_id): object_body for object_id, object_body in re.findall(rb"(\d+) 0 obj(.*?)endobj", pdf_bytes, re.S)}
+
+
+def parse_pdf_cmap(cmap_bytes):
+    cmap_text = cmap_bytes.decode("latin-1", errors="ignore")
+    cmap = {}
+    for start_hex, end_hex, dest_hex in re.findall(r"<([0-9A-F]+)>\s*<([0-9A-F]+)>\s*<([0-9A-F]+)>", cmap_text):
+        start_code = int(start_hex, 16)
+        end_code = int(end_hex, 16)
+        dest_code = int(dest_hex, 16)
+        for offset, source_code in enumerate(range(start_code, end_code + 1)):
+            cmap[source_code] = chr(dest_code + offset)
+    for source_hex, dest_hex in re.findall(r"<([0-9A-F]+)>\s*<([0-9A-F]+)>", cmap_text):
+        source_code = int(source_hex, 16)
+        if source_code not in cmap:
+            cmap[source_code] = chr(int(dest_hex, 16))
+    return cmap
+
+
+def decode_pdf_hex_text(hex_text, cmap):
+    output = []
+    for index in range(0, len(hex_text), 4):
+        code = int(hex_text[index:index + 4], 16)
+        output.append(cmap.get(code, ""))
+    return "".join(output)
+
+
+def extract_pdf_text_tokens(stream_bytes, font_maps, page_number):
+    stream_text = stream_bytes.decode("latin-1", errors="ignore")
+    token_pattern = re.compile(
+        r"/(?P<font>F\d+)\s+[\d.]+\s+Tf|"
+        r"(?P<tdx>-?[\d.]+)\s+(?P<tdy>-?[\d.]+)\s+Td|"
+        r"(?P<a>-?[\d.]+)\s+(?P<b>-?[\d.]+)\s+(?P<c>-?[\d.]+)\s+(?P<d>-?[\d.]+)\s+(?P<tmx>-?[\d.]+)\s+(?P<tmy>-?[\d.]+)\s+Tm|"
+        r"<(?P<tj>[0-9A-F]+)>\s*Tj|"
+        r"\[(?P<tjarr>.*?)\]\s*TJ",
+        re.S,
+    )
+
+    current_font = None
+    current_x = 0.0
+    current_y = 0.0
+    tokens = []
+    for match in token_pattern.finditer(stream_text):
+        if match.group("font"):
+            current_font = match.group("font")
+        elif match.group("tmx"):
+            current_x = float(match.group("tmx"))
+            current_y = float(match.group("tmy"))
+        elif match.group("tdx"):
+            current_x += float(match.group("tdx"))
+            current_y += float(match.group("tdy"))
+        elif match.group("tj") and current_font in font_maps:
+            decoded = decode_pdf_hex_text(match.group("tj"), font_maps[current_font]).strip()
+            if decoded:
+                tokens.append({"page": page_number, "x": current_x, "y": current_y, "text": decoded})
+        elif match.group("tjarr") and current_font in font_maps:
+            hex_chunks = re.findall(r"<([0-9A-F]+)>", match.group("tjarr"))
+            decoded = "".join(decode_pdf_hex_text(chunk, font_maps[current_font]) for chunk in hex_chunks).strip()
+            if decoded:
+                tokens.append({"page": page_number, "x": current_x, "y": current_y, "text": decoded})
+    return tokens
+
+
+def merge_pdf_tokens(token_list):
+    merged_parts = []
+    previous_token = ""
+    for token in token_list:
+        current_text = str(token.get("text", "")).strip()
+        if not current_text:
+            continue
+        join_without_space = len(previous_token) == 1 and len(current_text) == 1
+        separator = "" if not merged_parts or join_without_space else " "
+        merged_parts.append(separator + current_text)
+        previous_token = current_text
+    merged_text = "".join(merged_parts)
+    merged_text = re.sub(r"\s+([,./-])", r"\1", merged_text)
+    merged_text = re.sub(r"([/.-])\s+", r"\1", merged_text)
+    merged_text = re.sub(r"\s+", " ", merged_text).strip()
+    return merged_text
+
+
+def classify_waec_token_column(x_value):
+    if x_value < WAEC_COLUMN_BOUNDARIES["index"]:
+        return "index"
+    if x_value < WAEC_COLUMN_BOUNDARIES["name"]:
+        return "name"
+    if x_value < WAEC_COLUMN_BOUNDARIES["gender"]:
+        return "gender"
+    if x_value < WAEC_COLUMN_BOUNDARIES["dob"]:
+        return "dob"
+    return "results"
+
+
+def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
+    object_map = build_pdf_object_map(pdf_bytes)
+    if not object_map:
+        raise ValueError("The uploaded PDF could not be parsed as a WAEC result listing.")
+
+    page_object_ids = [object_id for object_id, object_body in object_map.items() if b"/Type /Page" in object_body and b"/Contents" in object_body]
+    page_tokens = []
+    pre_header_lines = []
+
+    for page_number, page_object_id in enumerate(sorted(page_object_ids), start=1):
+        page_object = object_map[page_object_id]
+        font_maps = {}
+        for font_name, font_object_id in re.findall(rb"/([A-Za-z]\d+)\s+(\d+) 0 R", page_object):
+            font_object = object_map.get(int(font_object_id))
+            if not font_object:
+                continue
+            to_unicode_match = re.search(rb"/ToUnicode\s+(\d+) 0 R", font_object)
+            if not to_unicode_match:
+                continue
+            cmap_object = object_map.get(int(to_unicode_match.group(1)))
+            if not cmap_object:
+                continue
+            font_maps[font_name.decode("latin-1")] = parse_pdf_cmap(decode_pdf_stream_bytes(cmap_object))
+
+        contents_match = re.search(rb"/Contents\s+(\[.*?\]|\d+\s+0\s+R)", page_object, re.S)
+        if not contents_match:
+            continue
+        content_object_ids = [int(value) for value in re.findall(rb"(\d+)\s+0\s+R", contents_match.group(1))]
+        for content_object_id in content_object_ids:
+            stream_bytes = decode_pdf_stream_bytes(object_map.get(content_object_id, b""))
+            if stream_bytes:
+                page_tokens.extend(extract_pdf_text_tokens(stream_bytes, font_maps, page_number))
+
+    if not page_tokens:
+        raise ValueError("No readable text was found in the uploaded WAEC PDF.")
+
+    page_tokens = sorted(page_tokens, key=lambda item: (item["page"], item["y"], item["x"]))
+    grouped_lines = []
+    for token in page_tokens:
+        if not grouped_lines:
+            grouped_lines.append({"page": token["page"], "y": token["y"], "tokens": [token]})
+            continue
+        previous_group = grouped_lines[-1]
+        if token["page"] == previous_group["page"] and abs(token["y"] - previous_group["y"]) <= 4:
+            previous_group["tokens"].append(token)
+        else:
+            grouped_lines.append({"page": token["page"], "y": token["y"], "tokens": [token]})
+
+    line_rows = []
+    header_seen = False
+    for group in grouped_lines:
+        grouped_tokens = {"index": [], "name": [], "gender": [], "dob": [], "results": []}
+        for token in sorted(group["tokens"], key=lambda item: item["x"]):
+            grouped_tokens[classify_waec_token_column(token["x"])] .append(token)
+        line_data = {key: merge_pdf_tokens(value) for key, value in grouped_tokens.items()}
+        line_data["all_text"] = " ".join([value for value in line_data.values() if value]).strip()
+        if not header_seen:
+            pre_header_lines.append(line_data["all_text"])
+            if "INDEX NUMBER" in line_data["all_text"].upper() and "RESULTS" in line_data["all_text"].upper():
+                header_seen = True
+            continue
+        line_rows.append(line_data)
+
+    school_candidates = []
+    for line_text in pre_header_lines:
+        clean_text = re.sub(r"\s+", " ", line_text).strip()
+        upper_text = clean_text.upper()
+        if not clean_text:
+            continue
+        if any(flag in upper_text for flag in ["RESULTS LISTING", "WAEC", "DATE", "SCHOOL", "AFRICAN EXAMINATIONS COUNCIL"]):
+            continue
+        if len(clean_text) >= 5:
+            school_candidates.append(clean_text)
+    school_name = school_candidates[0] if school_candidates else Path(fallback_school_name).stem.replace("_", " ").strip()
+
+    extracted_rows = []
+    current_row = None
+    for line_data in line_rows:
+        index_digits = re.sub(r"\D", "", line_data.get("index", ""))
+        if len(index_digits) >= 10:
+            if current_row:
+                extracted_rows.append(current_row)
+            current_row = {
+                "Student_ID": index_digits[:10],
+                "Student_Name": line_data.get("name", "").strip(),
+                "Gender": line_data.get("gender", "").strip(),
+                "Date_of_Birth": line_data.get("dob", "").strip(),
+                "Official_Results_Raw": [line_data.get("results", "").strip()],
+            }
+            continue
+        if current_row and line_data.get("results", "").strip():
+            current_row["Official_Results_Raw"].append(line_data.get("results", "").strip())
+    if current_row:
+        extracted_rows.append(current_row)
+
+    for row in extracted_rows:
+        row["Official_Results_Raw"] = " ".join([part for part in row["Official_Results_Raw"] if part]).strip()
+
+    return school_name, extracted_rows
+
+
+def normalize_waec_subject_label(subject_label):
+    label = str(subject_label).upper().replace(":", "A")
+    label = label.replace("EPE", "EWE")
+    label = label.replace("LANG.", "LANGUAGE")
+    label = label.replace("STUD.", "STUDIES")
+    label = label.replace("R.M.E.", "RME")
+    label = label.replace("R. M. E.", "RME")
+    label = label.replace("CAREER TECH.", "CAREER TECHNOLOGY")
+    label = label.replace("C.A. DESIGN", "CREATIVE ARTS DESIGN")
+    label = label.replace("C. A. DESIGN", "CREATIVE ARTS DESIGN")
+    label = re.sub(r"[^A-Z ]+", " ", label)
+    return re.sub(r"\s+", " ", label).strip()
+
+
+def map_waec_result_text_to_scores(results_text):
+    normalized_text = str(results_text).upper().replace(":", "A")
+    normalized_text = normalized_text.replace("\t", " ")
+    normalized_text = normalized_text.replace("\r", " ")
+    normalized_text = normalized_text.replace("\n", " ")
+    normalized_text = normalized_text.replace("\x0f", " ")
+    normalized_text = normalized_text.replace("\x06", " ")
+    normalized_text = normalized_text.replace("\x14", " ")
+    normalized_text = re.sub(r"\s+", " ", normalized_text).strip()
+
+    subject_scores = {}
+    for subject_label, grade_text in re.findall(r"([A-Z. ]+?)\s*-\s*([1-9])", normalized_text):
+        normalized_label = normalize_waec_subject_label(subject_label)
+        target_column = WAEC_RESULT_SUBJECT_MAP.get(normalized_label)
+        if target_column:
+            subject_scores[target_column] = grade_to_score(int(grade_text))
+    return subject_scores
+
+
+def prepare_official_pdf_import(uploaded_bytes, uploaded_name, expected_school="", forced_school=""):
+    parsed_school_name, extracted_rows = extract_waec_pdf_rows(uploaded_bytes, fallback_school_name=uploaded_name)
+    resolved_school = str(forced_school).strip() or str(parsed_school_name).strip()
+    if expected_school and parsed_school_name and str(expected_school).strip().casefold() != str(parsed_school_name).strip().casefold():
+        raise ValueError(f"The uploaded WAEC PDF belongs to {parsed_school_name}, not {expected_school}.")
+    if not resolved_school:
+        raise ValueError("EduPulse could not determine the school name from the uploaded WAEC PDF.")
+
+    school_profile_lookup = load_school_profile_lookup()
+    school_profile = school_profile_lookup.get(resolved_school, {})
+    resolved_circuit = school_profile.get("Circuit", "")
+    resolved_school_type = school_profile.get("School_Type", "Not Specified")
+    if not resolved_circuit:
+        raise ValueError(f"{resolved_school} is not yet mapped to a circuit. Update the circuits file before importing official results.")
+
+    official_rows = []
+    for extracted_row in extracted_rows:
+        official_row = {column: pd.NA for column in EXPECTED_DATA_COLUMNS}
+        official_row["Student_ID"] = str(extracted_row.get("Student_ID", "")).strip()
+        official_row["Student_Name"] = str(extracted_row.get("Student_Name", "")).strip()
+        official_row["Gender"] = str(extracted_row.get("Gender", "")).strip()
+        official_row["Date_of_Birth"] = str(extracted_row.get("Date_of_Birth", "")).strip()
+        official_row["School_Name"] = resolved_school
+        official_row["Circuit"] = resolved_circuit
+        official_row["School_Type"] = resolved_school_type
+        official_row["Official_Results_Raw"] = str(extracted_row.get("Official_Results_Raw", "")).strip()
+        official_row.update(map_waec_result_text_to_scores(official_row["Official_Results_Raw"]))
+        official_rows.append(official_row)
+
+    official_df = pd.DataFrame(official_rows, columns=EXPECTED_DATA_COLUMNS)
+    completed_df = prepare_student_upload_df(official_df)
+    if completed_df.empty:
+        raise ValueError("The official WAEC PDF was read, but no completed student rows were detected.")
+
+    matched_fields = WAEC_ACCEPTED_FIELDS.copy()
+    return completed_df, matched_fields, resolved_school, resolved_circuit, resolved_school_type
 
 
 def build_official_alias_lookup():
@@ -2100,8 +2720,6 @@ def map_official_import_columns(uploaded_df):
 
 
 def prepare_official_results_import(uploaded_df, school, school_circuit):
-    # Flexible official result sheets are normalized into the fixed
-    # EduPulse schema here so heads can import without retyping.
     mapped_columns = map_official_import_columns(uploaded_df)
     required_columns = ["Student_Name"]
     missing_required = [column for column in required_columns if column not in mapped_columns]
@@ -2112,6 +2730,8 @@ def prepare_official_results_import(uploaded_df, school, school_circuit):
             + ". Include a student name column and try again."
         )
 
+    school_profile = load_school_profile_lookup().get(school, {})
+    school_type = school_profile.get("School_Type", "Not Specified")
     official_df = pd.DataFrame(index=uploaded_df.index, columns=EXPECTED_DATA_COLUMNS)
     for column in EXPECTED_DATA_COLUMNS:
         official_df[column] = pd.NA
@@ -2119,22 +2739,24 @@ def prepare_official_results_import(uploaded_df, school, school_circuit):
     for target_column, source_column in mapped_columns.items():
         official_df[target_column] = uploaded_df[source_column]
 
-    if "Student_ID" in official_df.columns:
-        official_df["Student_ID"] = official_df["Student_ID"].fillna("").astype(str).str.strip()
-    if "Student_Name" in official_df.columns:
-        official_df["Student_Name"] = official_df["Student_Name"].fillna("").astype(str).str.strip()
-    if "Gender" in official_df.columns:
-        official_df["Gender"] = official_df["Gender"].fillna("").astype(str).str.strip()
+    for column in ["Student_ID", "Student_Name", "Gender", "Date_of_Birth", "Official_Results_Raw"]:
+        if column in official_df.columns:
+            official_df[column] = official_df[column].fillna("").astype(str).str.strip()
     official_df["School_Name"] = school
     official_df["Circuit"] = school_circuit
+    official_df["School_Type"] = school_type
 
     subject_cols = [column for column in EXPECTED_DATA_COLUMNS if column.endswith(FINAL_SUFFIX)]
     for subject_col in subject_cols:
         if subject_col in mapped_columns:
             official_df[subject_col] = coerce_score_series(uploaded_df[mapped_columns[subject_col]])
 
-    if "Attendance_Percent" in mapped_columns:
-        official_df["Attendance_Percent"] = pd.to_numeric(official_df["Attendance_Percent"], errors="coerce")
+    if "Official_Results_Raw" in mapped_columns:
+        for row_index, raw_results in official_df["Official_Results_Raw"].items():
+            parsed_scores = map_waec_result_text_to_scores(raw_results)
+            for target_column, target_value in parsed_scores.items():
+                if pd.isna(official_df.at[row_index, target_column]):
+                    official_df.at[row_index, target_column] = target_value
 
     completed_df = prepare_student_upload_df(official_df)
     if completed_df.empty:
@@ -2145,11 +2767,12 @@ def prepare_official_results_import(uploaded_df, school, school_circuit):
 
 
 def sync_student_upload(prepared_df, school, school_circuit, redirect_to_login=False, source_label="student CSV"):
+
     # Each sync replaces only the current school's rows, keeping the
     # rest of the municipality dataset intact for other schools.
     data_status = get_data_file_status()
     if data_status["ready"]:
-        existing_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+        existing_df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
         existing_df = prepare_student_upload_df(existing_df)
     else:
         existing_df = pd.DataFrame(columns=EXPECTED_DATA_COLUMNS)
@@ -2186,10 +2809,11 @@ def sync_student_upload(prepared_df, school, school_circuit, redirect_to_login=F
         combined_df = combined_df.drop_duplicates(subset=["Student_ID"], keep="last")
 
     write_dataframe_to_csv(combined_df, DATA_FILE, EXPECTED_DATA_COLUMNS)
+    uploader_name = st.session_state.get("current_user", "Headteacher")
     create_notification(
         event_type="student_bulk_sync",
         message=(
-            f"Bulk {source_label} synced by {st.session_state.get('current_user') or f'Headteacher upload for {school}'}: "
+            f"Bulk {source_label} synced by Headteacher {uploader_name} for {school}: "
             f"{len(prepared_df)} student row(s) synced for {school} in {school_circuit}. "
             f"Previous school rows: {previous_school_rows}; current school rows: {len(prepared_df)}."
         ),
@@ -2212,15 +2836,72 @@ def sync_student_upload(prepared_df, school, school_circuit, redirect_to_login=F
         st.session_state["portal_flash_severity"] = "success"
 
 
+def sync_multi_school_upload(prepared_df, source_label="official WAEC PDF import"):
+    if prepared_df.empty:
+        raise ValueError("No student rows were prepared for sync.")
+
+    data_status = get_data_file_status()
+    if data_status["ready"]:
+        existing_df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
+        existing_df = prepare_student_upload_df(existing_df)
+    else:
+        existing_df = pd.DataFrame(columns=EXPECTED_DATA_COLUMNS)
+
+    uploaded_schools = sorted(prepared_df["School_Name"].fillna("").astype(str).str.strip().unique().tolist())
+    previous_counts = (
+        existing_df.groupby("School_Name").size().to_dict()
+        if not existing_df.empty and "School_Name" in existing_df.columns
+        else {}
+    )
+    existing_df = existing_df[
+        ~existing_df["School_Name"].fillna("").astype(str).str.strip().isin(uploaded_schools)
+    ].copy() if "School_Name" in existing_df.columns else existing_df.copy()
+
+    uploaded_ids = prepared_df["Student_ID"].fillna("").astype(str).str.strip()
+    duplicate_uploaded_ids = sorted(uploaded_ids[uploaded_ids.duplicated()].unique().tolist())
+    if duplicate_uploaded_ids:
+        raise ValueError(
+            "The uploaded files contain duplicate Student_ID values. Please correct them before syncing: "
+            + ", ".join(duplicate_uploaded_ids[:10])
+            + ("..." if len(duplicate_uploaded_ids) > 10 else "")
+        )
+
+    existing_ids = set(existing_df["Student_ID"].fillna("").astype(str).str.strip().tolist()) if "Student_ID" in existing_df.columns else set()
+    conflicting_ids = sorted([student_id for student_id in uploaded_ids.tolist() if student_id in existing_ids])
+    if conflicting_ids:
+        raise ValueError(
+            "Some Student_ID values in this upload already belong to another school in the active dataset. Conflicting IDs: "
+            + ", ".join(conflicting_ids[:10])
+            + ("..." if len(conflicting_ids) > 10 else "")
+        )
+
+    combined_df = pd.concat([existing_df, prepared_df], ignore_index=True)
+    if "Student_ID" in combined_df.columns:
+        combined_df["Student_ID"] = combined_df["Student_ID"].fillna("").astype(str).str.strip()
+        combined_df = combined_df.drop_duplicates(subset=["Student_ID"], keep="last")
+
+    write_dataframe_to_csv(combined_df, DATA_FILE, EXPECTED_DATA_COLUMNS)
+    st.cache_data.clear()
+    summary_bits = []
+    for school_name in uploaded_schools:
+        current_count = int(prepared_df["School_Name"].fillna("").astype(str).str.strip().eq(school_name).sum())
+        summary_bits.append(f"{school_name}: {previous_counts.get(school_name, 0)} -> {current_count}")
+    st.session_state["portal_flash_message"] = (
+        f"Official results synced successfully for {len(uploaded_schools)} school(s). " + "; ".join(summary_bits)
+    )
+    st.session_state["portal_flash_severity"] = "success"
+
+
 def build_school_sync_status_df(df):
     mapping_df = load_circuit_mapping_df()
     if mapping_df.empty:
-        status_df = pd.DataFrame(columns=["School_Name", "Circuit"])
+        status_df = pd.DataFrame(columns=["School_Name", "Circuit", "School_Type"])
     else:
-        status_df = mapping_df[["School_Name", "Circuit"]].copy()
+        status_df = mapping_df[["School_Name", "Circuit", "School_Type"]].copy()
 
     if df.empty or "School_Name" not in df.columns:
         student_counts = pd.DataFrame(columns=["School_Name", "Students Uploaded"])
+        student_school_types = pd.DataFrame(columns=["School_Name", "School_Type"])
     else:
         student_counts = (
             df[df["School_Name"].fillna("").astype(str).str.strip() != ""]
@@ -2228,12 +2909,33 @@ def build_school_sync_status_df(df):
             .size()
             .rename(columns={"size": "Students Uploaded"})
         )
+        if "School_Type" in df.columns:
+            student_school_types = (
+                df[["School_Name", "School_Type"]]
+                .copy()
+                .assign(
+                    School_Name=lambda frame: frame["School_Name"].fillna("").astype(str).str.strip(),
+                    School_Type=lambda frame: frame["School_Type"].fillna("").astype(str).str.strip(),
+                )
+            )
+            student_school_types = student_school_types[student_school_types["School_Name"] != ""]
+            student_school_types = student_school_types.drop_duplicates(subset=["School_Name"], keep="last")
+        else:
+            student_school_types = pd.DataFrame(columns=["School_Name", "School_Type"])
 
     if status_df.empty and not student_counts.empty:
         status_df = student_counts.copy()
         status_df["Circuit"] = ""
+        status_df["School_Type"] = "Not Specified"
     else:
         status_df = status_df.merge(student_counts, on="School_Name", how="outer")
+
+    if not student_school_types.empty:
+        status_df = status_df.merge(student_school_types, on="School_Name", how="left", suffixes=("", "_from_data"))
+        if "School_Type_from_data" in status_df.columns:
+            status_df["School_Type"] = status_df["School_Type"].fillna("")
+            status_df.loc[status_df["School_Type"].astype(str).str.strip() == "", "School_Type"] = status_df["School_Type_from_data"]
+            status_df = status_df.drop(columns=["School_Type_from_data"])
 
     if "Students Uploaded" not in status_df.columns:
         upload_columns = [column for column in status_df.columns if str(column).startswith("Students Uploaded")]
@@ -2250,6 +2952,8 @@ def build_school_sync_status_df(df):
 
     status_df["School_Name"] = status_df["School_Name"].fillna("").astype(str).str.strip()
     status_df["Circuit"] = status_df["Circuit"].fillna("").astype(str).str.strip()
+    status_df["School_Type"] = status_df["School_Type"].fillna("Not Specified").astype(str).str.strip()
+    status_df.loc[status_df["School_Type"] == "", "School_Type"] = "Not Specified"
     status_df["Students Uploaded"] = pd.to_numeric(status_df["Students Uploaded"], errors="coerce").fillna(0).astype(int)
     status_df = status_df[status_df["School_Name"] != ""].copy()
     status_df["Status"] = status_df["Students Uploaded"].apply(
@@ -2458,7 +3162,7 @@ def render_circuit_setup(title, description, key_prefix, redirect_to_login=False
             key=f"{key_prefix}_download",
             use_container_width=True,
         )
-        st.caption("Use the fixed `School_Name` and `Circuit` headers exactly as downloaded.")
+        st.caption("Use the fixed `School_Name`, `Circuit`, and `School_Type` headers exactly as downloaded. School_Type must be Public or Private.")
 
     with right_col:
         uploaded_file = st.file_uploader(
@@ -2492,9 +3196,26 @@ def render_circuit_setup(title, description, key_prefix, redirect_to_login=False
         render_scroll_to_top()
         return
 
+    if "School_Type" not in uploaded_df.columns:
+        uploaded_df["School_Type"] = ""
     cleaned_df = uploaded_df[EXPECTED_CIRCUIT_COLUMNS].copy()
     cleaned_df["School_Name"] = cleaned_df["School_Name"].fillna("").astype(str).str.strip()
     cleaned_df["Circuit"] = cleaned_df["Circuit"].fillna("").astype(str).str.strip()
+    original_school_type_series = cleaned_df["School_Type"].copy()
+    cleaned_df["School_Type"] = normalize_school_type_series(cleaned_df["School_Type"])
+    invalid_school_types = summarize_invalid_school_type_values(original_school_type_series)
+    if invalid_school_types:
+        st.error(
+            "School_Type must be Public or Private. Invalid values detected: "
+            + ", ".join(invalid_school_types[:10])
+            + ("..." if len(invalid_school_types) > 10 else "")
+        )
+        render_scroll_to_top()
+        return
+    if cleaned_df["School_Type"].eq("").any():
+        st.error("Every row must include School_Type as either Public or Private.")
+        render_scroll_to_top()
+        return
     cleaned_df = cleaned_df[(cleaned_df["School_Name"] != "") & (cleaned_df["Circuit"] != "")]
 
     if cleaned_df.empty:
@@ -2523,34 +3244,34 @@ def render_circuit_setup(title, description, key_prefix, redirect_to_login=False
 
 
 def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
-    # This upload workspace supports both the standard EduPulse template
-    # and a more flexible official-results import path for school heads.
-    st.markdown("### 📥 Headteacher Student CSV Upload")
+    st.markdown("### ???? Headteacher Student Data Workspace")
     school = str(school).strip()
-    school_circuit = load_circuit_lookup().get(school, "")
+    school_profile = load_school_profile_lookup().get(school, {})
+    school_circuit = school_profile.get("Circuit", "")
+    school_type = school_profile.get("School_Type", "Not Specified")
     st.write(
-        f"Download the official student-data template, fill in the rows for {school}, and upload it here. The data will sync into the active District/Municipal dataset for the Director to see."
+        f"Use the prediction template for continuous-assessment forecasting, or import the official WAEC BECE result PDF for {school} when the final results are released."
     )
     st.caption(
-        "Attendance_Percent can be entered as (days present / total school days) × 100. If you leave it blank, EduPulse will auto-fill it using the best available school average, district average, or a default baseline."
+        "Attendance_Percent belongs to the prediction template only. Official WAEC results do not include attendance, so EduPulse will keep using attendance only inside forecasting workflows."
     )
     st.markdown(
         """
         <div class="mobile-sync-card">
-            <div class="mobile-sync-title">📱 Mobile Quick Sync</div>
+            <div class="mobile-sync-title">???? Mobile Quick Sync</div>
             <p class="mobile-sync-copy">
-                On phones, use the school template when you want a guided entry sheet, or use the official-result import tab if you already have a CSV export from WAEC or another results source.
+                On phones, use the prediction template when you want a guided entry sheet, or upload the standard WAEC PDF once the school receives the official BECE release.
             </p>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    with st.expander("How to work out Attendance_Percent"):
+    with st.expander("How to work out Attendance_Percent for the prediction template"):
         st.write("Formula: `(Days Present / Total School Days) x 100`")
         st.write("Example: if a student attended 142 out of 150 school days, attendance is 94.7%.")
         st.write("If you do not have the attendance figure ready, leave the field blank and EduPulse will fill it during sync.")
 
-    template_tab, official_tab = st.tabs(["📄 Template Sync", "🏛️ Official Result Import"])
+    template_tab, official_tab = st.tabs(["???? Prediction Template Sync", "??????? Official WAEC Result Import"])
 
     with template_tab:
         left_col, right_col = st.columns([1, 1])
@@ -2558,46 +3279,41 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
             student_id_prefix = build_school_student_id_prefix(school)
             next_number = get_next_school_student_id_number(school, student_id_prefix)
             st.download_button(
-                "Download Student Template",
-                build_headteacher_student_template_bytes(school, school_circuit),
+                "Download Prediction Template",
+                build_headteacher_student_template_bytes(school, school_circuit, school_type),
                 file_name=f"edupulse_{school.lower().replace(' ', '_')}_student_data_template.csv",
                 mime="text/csv",
                 key=f"{key_prefix}_download_csv",
                 use_container_width=True,
             )
-            if school_circuit:
-                st.caption(
-                    f"The template is prefilled with School_Name = {school}, Circuit = {school_circuit}, and Student_ID values starting from {student_id_prefix}-{next_number:04d}. If you add extra completed rows later without IDs, EduPulse will continue the same school-specific ID sequence during sync."
-                )
-            else:
-                st.caption(
-                    f"The template is prefilled with School_Name = {school} and Student_ID values starting from {student_id_prefix}-{next_number:04d}. Ask the Director to map this school to a circuit before syncing student rows."
-                )
+            st.caption(
+                f"The template is prefilled with School_Name = {school}, Circuit = {school_circuit or 'Not mapped yet'}, School_Type = {school_type}, and Student_ID values starting from {student_id_prefix}-{next_number:04d}. Final BECE columns are intentionally omitted because EduPulse predicts them automatically from the uploaded school assessments."
+            )
 
         with right_col:
             uploaded_file = st.file_uploader(
-                "Upload completed student-data template",
+                "Upload completed prediction template",
                 type=["csv"],
                 key=f"{key_prefix}_upload",
             )
 
-        with st.expander("Preview the required student-data columns"):
-            st.dataframe(pd.DataFrame({"Required Columns": EXPECTED_DATA_COLUMNS}), use_container_width=True, height=320)
+        with st.expander("Preview the required prediction-template columns"):
+            st.dataframe(pd.DataFrame({"Required Columns": PREDICTION_TEMPLATE_COLUMNS}), use_container_width=True, height=320)
 
         if uploaded_file is not None:
             try:
                 _, uploaded_df = read_uploaded_csv(uploaded_file, dtype={"Student_ID": str})
-                columns_valid, column_message = validate_data_columns(uploaded_df.columns.tolist())
+                columns_valid, column_message = validate_prediction_template_columns(uploaded_df.columns.tolist())
                 if not columns_valid:
                     st.error(column_message)
                 elif uploaded_df.empty:
-                    st.warning("The uploaded student-data CSV has the correct headers, but it does not contain any student rows yet.")
+                    st.warning("The uploaded prediction template has the correct headers, but it does not contain any student rows yet.")
                 elif not school_circuit:
-                    st.error("This school is not yet mapped to a circuit. Ask the Director to update the circuits CSV before syncing student data.")
+                    st.error("This school is not yet mapped to a circuit. Ask the Director to update the circuits CSV before syncing school data.")
                 else:
                     prepared_df = prepare_student_upload_df(uploaded_df)
                     if prepared_df.empty:
-                        st.warning("The uploaded student-data CSV does not contain any completed student rows yet.")
+                        st.warning("The uploaded prediction template does not contain any completed student rows yet.")
                     else:
                         non_blank_school_values = prepared_df["School_Name"][prepared_df["School_Name"] != ""].unique().tolist()
                         if non_blank_school_values and any(value != school for value in non_blank_school_values):
@@ -2605,18 +3321,19 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
                         else:
                             prepared_df["School_Name"] = school
                             prepared_df["Circuit"] = school_circuit
+                            prepared_df["School_Type"] = school_type
                             missing_name_rows = int(prepared_df["Student_Name"].fillna("").astype(str).str.strip().eq("").sum())
                             if missing_name_rows > 0:
                                 st.error(f"Every uploaded student row must include Student_Name. {missing_name_rows} row(s) are missing Student_Name.")
                             else:
                                 data_status = get_data_file_status()
                                 if data_status["ready"]:
-                                    existing_school_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+                                    existing_school_df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
                                     existing_school_df = prepare_student_upload_df(existing_school_df)
                                     existing_school_df = existing_school_df[
                                         existing_school_df["School_Name"].fillna("").astype(str).str.strip() == school
                                     ].copy()
-                                    existing_all_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+                                    existing_all_df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
                                     existing_all_df = prepare_student_upload_df(existing_all_df)
                                 else:
                                     existing_school_df = pd.DataFrame(columns=EXPECTED_DATA_COLUMNS)
@@ -2628,45 +3345,50 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
                                     existing_school_df=existing_school_df,
                                     existing_all_df=existing_all_df,
                                 )
+                                prepared_df = populate_provisional_final_scores(prepared_df)
 
-                                st.success("Student-data template validation passed.")
-                                status_message = f"Detected rows for {school}: {len(prepared_df)} | Circuit: {school_circuit}"
+                                st.success("Prediction template validation passed.")
+                                status_message = f"Detected rows for {school}: {len(prepared_df)} | Circuit: {school_circuit} | School Type: {school_type}"
                                 if auto_assigned_count > 0:
                                     status_message += f" | Auto-assigned Student_IDs: {auto_assigned_count}"
                                 if auto_filled_attendance_count > 0 and attendance_fill_value is not None:
                                     status_message += f" | Auto-filled Attendance rows: {auto_filled_attendance_count} at {attendance_fill_value:.1f}%"
                                 st.write(status_message)
-                                preview_cols = [column for column in ["Student_ID", "Student_Name", "Gender", "School_Name", "Circuit"] if column in prepared_df.columns]
+                                preview_cols = [column for column in ["Student_ID", "Student_Name", "Gender", "School_Name", "Circuit", "School_Type"] if column in prepared_df.columns]
                                 st.dataframe(prepared_df[preview_cols].head(10), use_container_width=True)
 
-                                if st.button("Sync Student Data to Director Dashboard", type="primary", key=f"{key_prefix}_sync"):
+                                if st.button("Sync Prediction Template to Director Dashboard", type="primary", key=f"{key_prefix}_sync"):
                                     try:
                                         sync_student_upload(
                                             prepared_df,
                                             school,
                                             school_circuit,
                                             redirect_to_login=redirect_to_login,
-                                            source_label="student CSV",
+                                            source_label="prediction template",
                                         )
                                         st.rerun()
                                     except ValueError as exc:
                                         st.error(str(exc))
             except Exception as exc:
-                st.error(f"The uploaded student-data CSV could not be processed: {exc}")
+                st.error(f"The uploaded prediction template could not be processed: {exc}")
 
     with official_tab:
-        st.write("Use this when you already have a CSV export of official results and do not want to retype students into the standard template.")
-        st.caption("EduPulse will match common result-sheet headers like Student Name, Index Number, Mathematics, English Language, Integrated Science, and Social Studies.")
-        with st.expander("Accepted official-result fields"):
-            alias_rows = [
-                {"EduPulse Field": field, "Accepted Examples": ", ".join(aliases[:4])}
-                for field, aliases in SUBJECT_IMPORT_ALIASES.items()
-            ]
-            st.dataframe(pd.DataFrame(alias_rows), use_container_width=True)
+        st.write("Upload the standard WAEC BECE result file for this school. EduPulse reads the WAEC fields directly from the PDF: Index Number, Name, Gender, DOB, and Results.")
+        with st.expander("Accepted official result fields"):
+            official_field_rows = pd.DataFrame(
+                [
+                    {"WAEC Field": "INDEX NUMBER", "Used For": "Student_ID"},
+                    {"WAEC Field": "NAME", "Used For": "Student_Name"},
+                    {"WAEC Field": "GENDER", "Used For": "Gender"},
+                    {"WAEC Field": "DOB", "Used For": "Date_of_Birth"},
+                    {"WAEC Field": "RESULTS", "Used For": "Official_Results_Raw plus subject score extraction"},
+                ]
+            )
+            st.dataframe(official_field_rows, use_container_width=True)
 
         official_file = st.file_uploader(
-            "Upload official result CSV",
-            type=["csv"],
+            "Upload official WAEC result file",
+            type=["pdf", "csv"],
             key=f"{key_prefix}_official_upload",
         )
 
@@ -2675,22 +3397,36 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
                 st.error("This school is not yet mapped to a circuit. Ask the Director to update the circuits CSV before importing official results.")
             else:
                 try:
-                    _, official_df = read_uploaded_csv(official_file, dtype={"Student_ID": str})
-                    prepared_official_df, matched_fields = prepare_official_results_import(official_df, school, school_circuit)
+                    if official_file.name.lower().endswith(".pdf"):
+                        prepared_official_df, matched_fields, parsed_school, parsed_circuit, parsed_school_type = prepare_official_pdf_import(
+                            official_file.getvalue(),
+                            official_file.name,
+                            expected_school=school,
+                            forced_school=school,
+                        )
+                    else:
+                        _, official_df = read_uploaded_csv(official_file, dtype={"Student_ID": str})
+                        prepared_official_df, matched_fields = prepare_official_results_import(official_df, school, school_circuit)
+                        parsed_school = school
+                        parsed_circuit = school_circuit
+                        parsed_school_type = school_type
 
                     data_status = get_data_file_status()
                     if data_status["ready"]:
-                        existing_school_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+                        existing_school_df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
                         existing_school_df = prepare_student_upload_df(existing_school_df)
                         existing_school_df = existing_school_df[
                             existing_school_df["School_Name"].fillna("").astype(str).str.strip() == school
                         ].copy()
-                        existing_all_df = pd.read_csv(DATA_FILE, dtype={"Student_ID": str})
+                        existing_all_df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
                         existing_all_df = prepare_student_upload_df(existing_all_df)
                     else:
                         existing_school_df = pd.DataFrame(columns=EXPECTED_DATA_COLUMNS)
                         existing_all_df = pd.DataFrame(columns=EXPECTED_DATA_COLUMNS)
 
+                    prepared_official_df["School_Name"] = school
+                    prepared_official_df["Circuit"] = school_circuit
+                    prepared_official_df["School_Type"] = school_type
                     prepared_official_df, auto_assigned_count = assign_missing_school_student_ids(
                         prepared_official_df,
                         school,
@@ -2702,9 +3438,9 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
                         existing_all_df=existing_all_df,
                     )
 
-                    st.success("Official result import mapped successfully.")
+                    st.success("Official WAEC result import mapped successfully.")
                     st.write(
-                        f"Matched fields: {', '.join(matched_fields)}"
+                        f"Parsed school: {parsed_school} | Circuit: {parsed_circuit} | School Type: {parsed_school_type} | Matched fields: {', '.join(matched_fields)}"
                         + (f" | Auto-assigned Student_IDs: {auto_assigned_count}" if auto_assigned_count else "")
                         + (
                             f" | Auto-filled Attendance rows: {auto_filled_attendance_count} at {attendance_fill_value:.1f}%"
@@ -2712,28 +3448,130 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
                             else ""
                         )
                     )
-                    preview_cols = [column for column in ["Student_ID", "Student_Name", "Gender", "School_Name", "Circuit"] if column in prepared_official_df.columns]
+                    preview_cols = [column for column in ["Student_ID", "Student_Name", "Gender", "Date_of_Birth", "School_Name", "Circuit", "School_Type"] if column in prepared_official_df.columns]
                     st.dataframe(prepared_official_df[preview_cols].head(10), use_container_width=True)
 
-                    if st.button("Sync Official Results to Director Dashboard", type="primary", key=f"{key_prefix}_official_sync"):
+                    if st.button("Sync Official WAEC Results to Director Dashboard", type="primary", key=f"{key_prefix}_official_sync"):
                         try:
                             sync_student_upload(
                                 prepared_official_df,
                                 school,
                                 school_circuit,
                                 redirect_to_login=redirect_to_login,
-                                source_label="official results import",
+                                source_label="official WAEC result upload",
                             )
                             st.rerun()
                         except ValueError as exc:
                             st.error(str(exc))
                 except Exception as exc:
-                    st.error(f"The official result CSV could not be processed: {exc}")
+                    st.error(f"The official WAEC file could not be processed: {exc}")
 
     render_scroll_to_top()
 
 
+def render_director_official_results_intake(key_prefix):
+    st.markdown("### ??????? Official WAEC Results Intake")
+    st.write("Directors can replace school rows from the standard WAEC BECE result PDFs either one school at a time or in a multi-school bulk upload.")
+    with st.expander("Accepted official result fields"):
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"WAEC Field": "INDEX NUMBER", "Used For": "Student_ID"},
+                    {"WAEC Field": "NAME", "Used For": "Student_Name"},
+                    {"WAEC Field": "GENDER", "Used For": "Gender"},
+                    {"WAEC Field": "DOB", "Used For": "Date_of_Birth"},
+                    {"WAEC Field": "RESULTS", "Used For": "Subject extraction and archival raw text"},
+                ]
+            ),
+            use_container_width=True,
+        )
+
+    single_tab, bulk_tab = st.tabs(["Single School Upload", "Bulk School Upload"])
+
+    with single_tab:
+        single_file = st.file_uploader(
+            "Upload one official WAEC result PDF",
+            type=["pdf"],
+            key=f"{key_prefix}_single_pdf",
+        )
+        if single_file is not None:
+            try:
+                prepared_df, matched_fields, parsed_school, parsed_circuit, parsed_school_type = prepare_official_pdf_import(
+                    single_file.getvalue(),
+                    single_file.name,
+                )
+                preview_cols = [column for column in ["Student_ID", "Student_Name", "Gender", "Date_of_Birth", "School_Name", "Circuit", "School_Type"] if column in prepared_df.columns]
+                st.success("Official WAEC PDF parsed successfully.")
+                st.write(f"School: {parsed_school} | Circuit: {parsed_circuit} | School Type: {parsed_school_type} | Fields: {', '.join(matched_fields)}")
+                st.dataframe(prepared_df[preview_cols].head(12), use_container_width=True)
+                if st.button("Sync This School's Official Results", type="primary", key=f"{key_prefix}_single_sync"):
+                    sync_student_upload(prepared_df, parsed_school, parsed_circuit, source_label="official WAEC PDF")
+                    st.rerun()
+            except Exception as exc:
+                st.error(f"The uploaded WAEC PDF could not be processed: {exc}")
+
+    with bulk_tab:
+        bulk_files = st.file_uploader(
+            "Upload multiple official WAEC result PDFs",
+            type=["pdf"],
+            accept_multiple_files=True,
+            key=f"{key_prefix}_bulk_pdf",
+        )
+        if bulk_files:
+            prepared_frames = []
+            summary_rows = []
+            duplicate_school_names = []
+            seen_schools = set()
+            for uploaded_file in bulk_files:
+                try:
+                    prepared_df, matched_fields, parsed_school, parsed_circuit, parsed_school_type = prepare_official_pdf_import(
+                        uploaded_file.getvalue(),
+                        uploaded_file.name,
+                    )
+                    school_key = parsed_school.strip().casefold()
+                    if school_key in seen_schools:
+                        duplicate_school_names.append(parsed_school)
+                        continue
+                    seen_schools.add(school_key)
+                    prepared_frames.append(prepared_df)
+                    summary_rows.append(
+                        {
+                            "School_Name": parsed_school,
+                            "Circuit": parsed_circuit,
+                            "School_Type": parsed_school_type,
+                            "Students Parsed": len(prepared_df),
+                            "Matched Fields": ", ".join(matched_fields),
+                        }
+                    )
+                except Exception as exc:
+                    summary_rows.append(
+                        {
+                            "School_Name": uploaded_file.name,
+                            "Circuit": "",
+                            "School_Type": "",
+                            "Students Parsed": 0,
+                            "Matched Fields": f"Error: {exc}",
+                        }
+                    )
+
+            summary_df = pd.DataFrame(summary_rows)
+            if not summary_df.empty:
+                st.dataframe(summary_df, use_container_width=True)
+            if duplicate_school_names:
+                st.warning("Duplicate school PDFs were skipped in this batch: " + ", ".join(sorted(set(duplicate_school_names))))
+            valid_frames = [frame for frame in prepared_frames if not frame.empty]
+            if valid_frames:
+                combined_df = pd.concat(valid_frames, ignore_index=True)
+                if st.button("Sync Bulk Official Results", type="primary", key=f"{key_prefix}_bulk_sync"):
+                    sync_multi_school_upload(combined_df, source_label="bulk official WAEC PDF import")
+                    st.rerun()
+            else:
+                st.info("Upload at least one readable WAEC PDF to prepare a bulk sync.")
+
+
+
 def render_director_data_setup(data_status, standalone=False, key_prefix="director_data_setup"):
+
     scope_label = get_scope_label()
     active_config = load_app_config()
     circuit_status = get_circuit_file_status()
@@ -2742,12 +3580,12 @@ def render_director_data_setup(data_status, standalone=False, key_prefix="direct
     if standalone:
         st.title("🗂️ Director Data Setup")
         st.write(
-            f"Before EduPulse can open the analytics workspace for {scope_label}, the Director should upload the official circuits CSV. Headteachers will then download school-specific student templates and sync their own school data."
+            f"Before EduPulse can open the analytics workspace for {scope_label}, the Director should upload the official circuits CSV. Headteachers will then download school-specific prediction templates, and either Heads or the Director can later sync the official WAEC result PDFs for final analysis."
         )
     else:
         st.markdown("### 🗂️ Data Setup & Replacement")
         st.write(
-            f"Directors manage only the circuits map for {scope_label}. Headteachers handle student-data uploads for their own schools."
+            f"Directors manage the circuits map and may also bulk-load official WAEC BECE result PDFs. Headteachers handle prediction-template uploads and their own school-level official-result uploads."
         )
 
     render_status_message(circuit_status)
@@ -3328,34 +4166,83 @@ def build_communication_queue(df, subject_cols):
 
 def render_communication_center(df, subject_cols, key_prefix):
     st.markdown("### 📣 Communication Center")
-    st.write("Prepare email, SMS, or WhatsApp alerts for missing uploads, at-risk students, and director notices.")
-    render_smtp_settings(f"{key_prefix}_smtp")
+    st.write("Send WhatsApp notices only: to one school, a selected group of schools, or all schools in the active district.")
     contacts_df = load_contacts_df()
+    scope_label = get_scope_label()
 
-    with st.expander("Create a Custom Director Notice"):
-        if contacts_df.empty:
-            st.info("Custom notices will work better after schools save their contact profiles.")
-        school_options = sorted(contacts_df["school"].dropna().astype(str).str.strip().loc[lambda values: values != ""].unique().tolist())
-        selected_school = st.selectbox("Target School", school_options, key=f"{key_prefix}_custom_school") if school_options else ""
+    district_contacts_df = contacts_df[
+        contacts_df["district"].fillna("").astype(str).str.strip().eq(scope_label)
+    ].copy() if not contacts_df.empty else pd.DataFrame()
+    school_options = sorted(
+        district_contacts_df["school"].dropna().astype(str).str.strip().loc[lambda values: values != ""].unique().tolist()
+    ) if not district_contacts_df.empty else []
+
+    with st.expander("Create WhatsApp Director Notice"):
+        if not school_options:
+            st.info("No school contacts found for this district yet. Headteachers should save their contact profile first.")
+        target_mode = st.radio(
+            "Recipient Scope",
+            ["Single School", "Selected Schools", "All Schools"],
+            horizontal=True,
+            key=f"{key_prefix}_target_mode",
+        )
+        selected_single_school = ""
+        selected_school_group = []
+        if target_mode == "Single School":
+            selected_single_school = (
+                st.selectbox("Choose School", school_options, key=f"{key_prefix}_single_school")
+                if school_options
+                else ""
+            )
+        elif target_mode == "Selected Schools":
+            selected_school_group = st.multiselect(
+                "Choose Schools",
+                school_options,
+                key=f"{key_prefix}_school_group",
+            )
+
         notice_subject = st.text_input("Notice Subject", key=f"{key_prefix}_custom_subject")
         notice_body = st.text_area("Notice Message", key=f"{key_prefix}_custom_body", height=120)
-        if selected_school:
-            contact_match = contacts_df[
-                contacts_df["district"].fillna("").astype(str).str.strip().eq(get_scope_label())
-                & contacts_df["school"].fillna("").astype(str).str.strip().eq(selected_school)
-            ].tail(1)
-            if not contact_match.empty and notice_body.strip():
-                contact_row = contact_match.iloc[0]
-                custom_cols = st.columns(3)
-                with custom_cols[0]:
-                    if contact_row.get("email", ""):
-                        st.markdown(f"[Open Email Draft]({build_mailto_link(contact_row['email'], notice_subject, notice_body)})")
-                with custom_cols[1]:
-                    if contact_row.get("whatsapp_number", ""):
-                        st.markdown(f"[Open WhatsApp Draft]({build_whatsapp_link(contact_row['whatsapp_number'], notice_body)})")
-                with custom_cols[2]:
-                    if contact_row.get("phone", ""):
-                        st.markdown(f"[Open SMS Draft]({build_sms_link(contact_row['phone'], notice_body)})")
+        composed_message = (
+            f"{notice_subject.strip()}\n\n{notice_body.strip()}"
+            if notice_subject.strip()
+            else notice_body.strip()
+        )
+
+        if target_mode == "Single School":
+            target_schools = [selected_single_school] if selected_single_school else []
+        elif target_mode == "Selected Schools":
+            target_schools = selected_school_group
+        else:
+            target_schools = school_options
+
+        target_contact_df = district_contacts_df[
+            district_contacts_df["school"].fillna("").astype(str).str.strip().isin(target_schools)
+        ].copy() if target_schools else pd.DataFrame()
+        target_contact_df["whatsapp_number_clean"] = target_contact_df["whatsapp_number"].fillna("").astype(str).str.strip()
+        target_contact_df = target_contact_df[target_contact_df["whatsapp_number_clean"] != ""]
+        target_contact_df = target_contact_df.drop_duplicates(subset=["school"], keep="last")
+        resolved_rows = target_contact_df[["school", "contact_name", "whatsapp_number_clean"]].rename(
+            columns={"school": "School", "contact_name": "Contact", "whatsapp_number_clean": "WhatsApp"}
+        )
+        if not resolved_rows.empty:
+            st.dataframe(resolved_rows, use_container_width=True)
+
+        if composed_message and not target_contact_df.empty:
+            if len(target_contact_df) == 1:
+                whatsapp_number = target_contact_df.iloc[0]["whatsapp_number_clean"]
+                st.markdown(f"[Open WhatsApp Draft]({build_whatsapp_link(whatsapp_number, composed_message)})")
+            else:
+                st.caption("WhatsApp opens one recipient per click. Use the buttons below to open each draft.")
+                for _, row in target_contact_df.iterrows():
+                    school_name = str(row.get("school", "")).strip()
+                    whatsapp_number = str(row.get("whatsapp_number_clean", "")).strip()
+                    if whatsapp_number:
+                        st.markdown(
+                            f"- [{school_name or 'Unnamed School'} WhatsApp Draft]({build_whatsapp_link(whatsapp_number, composed_message)})"
+                        )
+        elif composed_message and target_contact_df.empty:
+            st.warning("No WhatsApp numbers are available for the selected target schools.")
 
     queue_df = build_communication_queue(df, subject_cols)
     if queue_df.empty:
@@ -3382,30 +4269,21 @@ def render_communication_center(df, subject_cols, key_prefix):
     st.write(f"**Subject:** {alert_row['Subject']}")
     st.text_area("Message", value=alert_row["Message"], height=140, key=f"{key_prefix}_message_preview")
 
-    active_config = load_app_config()
     action_cols = st.columns(3)
     with action_cols[0]:
-        if alert_row["Email"]:
-            st.markdown(f"[Open Email Draft]({build_mailto_link(alert_row['Email'], alert_row['Subject'], alert_row['Message'])})")
-            if smtp_config_is_ready(active_config) and st.button("Send Email Now", key=f"{key_prefix}_send_email"):
-                try:
-                    send_email_alert(active_config, alert_row["Email"], alert_row["Subject"], alert_row["Message"])
-                    st.success("Email alert sent successfully.")
-                except Exception as exc:
-                    st.error(f"Email delivery failed: {exc}")
+        st.caption("Email channel disabled for this deployment.")
     with action_cols[1]:
         if alert_row["WhatsApp"]:
             st.markdown(f"[Open WhatsApp Draft]({build_whatsapp_link(alert_row['WhatsApp'], alert_row['Message'])})")
     with action_cols[2]:
-        if alert_row["Phone"]:
-            st.markdown(f"[Open SMS Draft]({build_sms_link(alert_row['Phone'], alert_row['Message'])})")
+        st.caption("SMS channel disabled for this deployment.")
 
 
 def render_reports_center(scope_df, subject_cols, role, school="", key_prefix="reports"):
     scope_label = school if role == "Headteacher" and school else get_scope_label()
     school_sync_df = build_school_sync_status_df(scope_df) if role == "Headteacher" else build_school_sync_status_df(load_data(show_errors=False)[0])
     st.markdown("### 📦 Briefing Packs & Calibration")
-    st.write("Download meeting-ready CSV/PDF packs, review live model diagnostics, and monitor saved scenario calibration.")
+    st.write("Download meeting-ready CSV/PDF packs and monitor saved scenario calibration.")
 
     report_scope_df = scope_df.copy()
     report_title = scope_label
@@ -3446,25 +4324,6 @@ def render_reports_center(scope_df, subject_cols, role, school="", key_prefix="r
             key=f"{key_prefix}_pdf",
             use_container_width=True,
         )
-
-    ml_bundle = get_live_ml_bundle()
-    if ml_bundle:
-        model_rows = []
-        for subject_col, model_details in ml_bundle.items():
-            model_rows.append(
-                {
-                    "Subject": format_subject_name(f"{subject_col}{FINAL_SUFFIX}"),
-                    "Bundle Source": model_details.get("source", "Live model"),
-                    "Feature Count": len(model_details.get("feature_columns", [])),
-                    "Cross-Val R²": round(float(model_details["cv_r2"]), 3) if pd.notna(model_details["cv_r2"]) else np.nan,
-                    "Cross-Val MAE": round(float(model_details["cv_mae"]), 2) if pd.notna(model_details["cv_mae"]) else np.nan,
-                }
-            )
-        with st.expander("Live ML Model Diagnostics"):
-            st.caption("These pretrained subject models are loaded directly from the attached bece_models.joblib bundle and used inside the live predictor.")
-            st.dataframe(pd.DataFrame(model_rows), use_container_width=True)
-    else:
-        st.warning("No pretrained ML bundle could be loaded from bece_models.joblib, so the predictor will fall back to the weighted 30/70 proxy.")
 
     calibration_df = build_scenario_calibration_df(scope_df, subject_cols)
     st.markdown("#### Predicted vs Actual Calibration")
@@ -3772,6 +4631,60 @@ def render_director_dashboard(df, subject_cols):
     st.caption(
         f"Placement summary check: {int(agg_df.shape[0])} students loaded and {int(circuit_pivot.loc['Total Students', 'Total'])} students counted across circuit totals."
     )
+
+    manual_prediction_df = build_manual_prediction_summary_df(scope_label)
+    manual_prediction_df = manual_prediction_df[
+        manual_prediction_df["placement_category"].fillna("").astype(str).isin(["Category A", "Category B", "Category C"])
+    ].copy() if not manual_prediction_df.empty else pd.DataFrame()
+    if not manual_prediction_df.empty:
+        st.markdown("---")
+        st.markdown("### Manual Category Forecast Watchlist")
+        st.write("These are the latest headteacher-saved manual placement predictions for students expected to reach Category A, B, or C schools.")
+        manual_display_df = manual_prediction_df[
+            ["student_name", "student_id", "school", "circuit", "school_type", "aggregate", "best_six_raw_total", "placement", "created_by", "created_at"]
+        ].rename(
+            columns={
+                "student_name": "Student_Name",
+                "student_id": "Student_ID",
+                "school": "School_Name",
+                "circuit": "Circuit",
+                "school_type": "School_Type",
+                "aggregate": "Aggregate",
+                "best_six_raw_total": "Best_Six_Raw_Total",
+                "placement": "Placement_Outlook",
+                "created_by": "Predicted_By",
+                "created_at": "Saved_At",
+            }
+        )
+        st.dataframe(
+            manual_display_df.sort_values(["Aggregate", "Best_Six_Raw_Total"], ascending=[True, False]),
+            use_container_width=True,
+        )
+
+        school_prediction_rank = (
+            manual_prediction_df.groupby(["school", "placement_category"]).size().unstack(fill_value=0)
+            .reindex(columns=["Category A", "Category B", "Category C"], fill_value=0)
+            .reset_index()
+            .rename(columns={"school": "School_Name"})
+        )
+        school_prediction_rank = school_prediction_rank.sort_values(["Category A", "Category B", "Category C", "School_Name"], ascending=[False, False, False, True]).reset_index(drop=True)
+        school_prediction_rank.index = school_prediction_rank.index + 1
+        school_prediction_rank.insert(0, "Rank", school_prediction_rank.index)
+        st.write("#### School Ranking by Manual Category Predictions")
+        st.dataframe(school_prediction_rank, use_container_width=True)
+
+        circuit_prediction_rank = (
+            manual_prediction_df.groupby(["circuit", "placement_category"]).size().unstack(fill_value=0)
+            .reindex(columns=["Category A", "Category B", "Category C"], fill_value=0)
+            .reset_index()
+            .rename(columns={"circuit": "Circuit"})
+        )
+        circuit_prediction_rank = circuit_prediction_rank.sort_values(["Category A", "Category B", "Category C", "Circuit"], ascending=[False, False, False, True]).reset_index(drop=True)
+        circuit_prediction_rank.index = circuit_prediction_rank.index + 1
+        circuit_prediction_rank.insert(0, "Rank", circuit_prediction_rank.index)
+        st.write("#### Circuit Ranking by Manual Category Predictions")
+        st.dataframe(circuit_prediction_rank, use_container_width=True)
+
     render_scroll_to_top()
 
 
@@ -3779,7 +4692,7 @@ def render_audit_table(display_df, key_prefix, filename):
     st.markdown("### 📋 Student Audit")
 
     audit_df = display_df.drop(columns=["Search_Label"], errors="ignore").copy()
-    preferred_order = ["Student_Name", "Gender", "School_Name", "Circuit"]
+    preferred_order = ["Student_Name", "Gender", "School_Name", "Circuit", "School_Type"]
     ordered_columns = [column for column in preferred_order if column in audit_df.columns]
     ordered_columns.extend(column for column in audit_df.columns if column not in ordered_columns)
     audit_df = audit_df[ordered_columns]
@@ -3921,6 +4834,7 @@ def render_school_dashboard(school_df, subject_cols):
                 school_df["Action_Zone"]
                 .fillna("Unclassified")
                 .astype(str)
+                .apply(normalize_action_zone)
                 .value_counts()
                 .reset_index()
             )
@@ -3932,6 +4846,7 @@ def render_school_dashboard(school_df, subject_cols):
                 title="Action Zone Distribution",
                 color_discrete_sequence=px.colors.qualitative.Safe,
             )
+            fig_zones.update_traces(showlegend=False)
             st.plotly_chart(fig_zones, use_container_width=True)
         else:
             placement_summary = (
@@ -3964,9 +4879,9 @@ def render_school_dashboard(school_df, subject_cols):
 # 12. HEADTEACHER ENTRY FORMS AND WHAT-IF PREDICTION WORKSPACE
 # ============================================================
 def manual_entry_form(df, subject_cols, school):
-    st.markdown("### ➕ Add Single Student")
+    st.markdown("### ??? Add Single Student")
     st.info("Use this update form to add one new student after the initial school CSV upload. The record syncs immediately to the Director dashboard under the same school and mapped circuit.")
-    st.caption("Attendance is optional here. You can enter the exact percentage if you have it, or leave it blank and EduPulse will auto-fill it in the background.")
+    st.caption("Attendance is no longer entered here because it does not appear on the official WAEC result file. EduPulse will still keep an attendance baseline in the background for forecasting use.")
 
     if not subject_cols:
         st.warning("No BECE subject columns were found, so results cannot be entered yet.")
@@ -3977,6 +4892,7 @@ def manual_entry_form(df, subject_cols, school):
     core_subjects = [subject for subject in subject_cols if is_core_subject(subject)]
     elective_subjects = [subject for subject in subject_cols if subject not in core_subjects]
     suggested_student_id = f"{build_school_student_id_prefix(school)}-{get_next_school_student_id_number(school, build_school_student_id_prefix(school)):04d}"
+    school_profile = load_school_profile_lookup().get(school, {})
     suggested_attendance = resolve_attendance_default_value(
         existing_school_df=df[df["School_Name"].fillna("").astype(str).str.strip() == school].copy() if "School_Name" in df.columns else None,
         existing_all_df=df,
@@ -3985,13 +4901,8 @@ def manual_entry_form(df, subject_cols, school):
     with st.form("bece_submit", clear_on_submit=True):
         student_name = st.text_input("Student Full Name")
         student_id = st.text_input("Student ID", value=suggested_student_id, help="A school-specific ID is suggested automatically. You can edit it if needed.")
-
         gender = st.selectbox("Gender", ["Not specified", "F", "M"])
-        attendance_input = st.text_input(
-            "Attendance Percent (optional)",
-            placeholder=f"Leave blank to use {suggested_attendance:.1f}%",
-            help="Use (days present / total school days) x 100. Example: 142/150 x 100 = 94.7",
-        )
+        date_of_birth = st.text_input("Date of Birth (optional)", placeholder="Example: 21/10/2008")
 
         st.markdown("#### Core Subjects")
         grade_inputs = {}
@@ -4020,21 +4931,9 @@ def manual_entry_form(df, subject_cols, school):
 
         if st.form_submit_button("Upload to District/Municipal Records", type="primary"):
             final_student_id = student_id.strip() or suggested_student_id
-
             if not student_name.strip() or not final_student_id.strip():
                 st.error("Student name and student ID are required.")
                 return
-
-            attendance_value = None
-            if attendance_input.strip():
-                try:
-                    attendance_value = float(attendance_input.strip())
-                except ValueError:
-                    st.error("Attendance Percent must be a valid number between 0 and 100.")
-                    return
-                if attendance_value < 0 or attendance_value > 100:
-                    st.error("Attendance Percent must be between 0 and 100.")
-                    return
 
             existing_ids = df["Student_ID"].astype(str).str.strip() if "Student_ID" in df.columns else pd.Series(dtype=str)
             if final_student_id.strip() in set(existing_ids.tolist()):
@@ -4045,26 +4944,13 @@ def manual_entry_form(df, subject_cols, school):
             record["Student_ID"] = final_student_id.strip()
             record["Student_Name"] = student_name.strip()
             record["School_Name"] = school
+            record["Date_of_Birth"] = date_of_birth.strip()
+            record["Circuit"] = school_profile.get("Circuit", load_circuit_lookup().get(school, school))
+            record["School_Type"] = school_profile.get("School_Type", "Not Specified")
+            record["Attendance_Percent"] = round(float(suggested_attendance), 1)
 
             if "Gender" in record:
                 record["Gender"] = "" if gender == "Not specified" else gender
-            if "Attendance_Percent" in record:
-                if attendance_value is not None:
-                    record["Attendance_Percent"] = round(attendance_value, 1)
-                else:
-                    school_attendance = pd.to_numeric(
-                        df.loc[df["School_Name"] == school, "Attendance_Percent"],
-                        errors="coerce",
-                    ) if {"School_Name", "Attendance_Percent"}.issubset(df.columns) else pd.Series(dtype=float)
-                    municipality_attendance = pd.to_numeric(df["Attendance_Percent"], errors="coerce") if "Attendance_Percent" in df.columns else pd.Series(dtype=float)
-                    if school_attendance.notna().any():
-                        record["Attendance_Percent"] = round(float(school_attendance.mean()), 1)
-                    elif municipality_attendance.notna().any():
-                        record["Attendance_Percent"] = round(float(municipality_attendance.mean()), 1)
-                    else:
-                        record["Attendance_Percent"] = 75.0
-            if "Circuit" in record:
-                record["Circuit"] = load_circuit_lookup().get(school, school)
 
             final_scores = []
             for subject, grade in grade_inputs.items():
@@ -4087,7 +4973,9 @@ def manual_entry_form(df, subject_cols, school):
                 record["Action_Zone"] = action_zone_from_average(sum(final_scores) / len(final_scores))
 
             new_row_df = pd.DataFrame([record]).reindex(columns=csv_columns)
-            new_row_df.to_csv(DATA_FILE, mode="a", header=False, index=False)
+            combined_rows_df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
+            combined_rows_df = pd.concat([combined_rows_df, new_row_df.reindex(columns=EXPECTED_DATA_COLUMNS)], ignore_index=True)
+            write_table_df(DATA_FILE, combined_rows_df, EXPECTED_DATA_COLUMNS)
             create_notification(
                 event_type="student_added",
                 message=(
@@ -4104,16 +4992,23 @@ def manual_entry_form(df, subject_cols, school):
             )
             st.cache_data.clear()
             st.session_state["portal_flash_message"] = (
-                f"✅ Student added successfully: {student_name.strip()} ({final_student_id.strip()}) has been synced to {school}."
+                f"??? Student added successfully: {student_name.strip()} ({final_student_id.strip()}) has been synced to {school}."
             )
             st.session_state["portal_flash_severity"] = "success"
             st.rerun()
     render_scroll_to_top()
 
 
-def render_manual_grade_predictor():
-    with st.expander("📝 Manual BECE Grade Entry (Placement Predictor)"):
+def render_manual_grade_predictor(school):
+    with st.expander("???? Manual BECE Grade Entry (Placement Predictor)"):
         st.write("Enter the four core grades and the two best elective grades to forecast CSSPS placement.")
+        st.caption("When you save a manual prediction here, the Director dashboard will receive it and rank schools and circuits by their latest Category A, B, and C predictions.")
+
+        student_cols = st.columns([1.2, 1])
+        with student_cols[0]:
+            student_name = st.text_input("Student Name", key="manual_prediction_student_name")
+        with student_cols[1]:
+            student_id = st.text_input("Student ID (optional)", key="manual_prediction_student_id")
 
         core_cols = st.columns(4)
         with core_cols[0]:
@@ -4132,15 +5027,57 @@ def render_manual_grade_predictor():
             elective_two = st.number_input("2nd Best Elective Grade", 1, 9, 5, key="manual_elective_2")
 
         aggregate = math_grade + english_grade + science_grade + social_grade + elective_one + elective_two
-        placement = predict_placement(aggregate)
+        best_six_raw_total = sum(grade_to_score(grade) for grade in [math_grade, english_grade, science_grade, social_grade, elective_one, elective_two])
+        placement = predict_placement(aggregate, best_six_raw_total=best_six_raw_total, include_tie_break=True)
+        placement_category = predict_placement(aggregate)
 
-        metric_cols = st.columns(2)
+        metric_cols = st.columns(3)
         with metric_cols[0]:
             st.metric("Total Aggregate", aggregate, help="Lower is better.")
         with metric_cols[1]:
+            st.metric("Best 6 Raw Total", f"{best_six_raw_total:.0f}")
+        with metric_cols[2]:
             st.info(f"**Predicted Placement:** {placement}")
 
-        st.caption("This tool is for forecasting only. It does not write anything to the district/municipal records.")
+        if st.button("Save Manual Prediction to Director Dashboard", key="save_manual_prediction", type="primary"):
+            if not student_name.strip():
+                st.error("Enter the student name before saving this prediction.")
+            else:
+                school_profile = load_school_profile_lookup().get(school, {})
+                save_manual_prediction(
+                    {
+                        "prediction_id": f"manual-pred-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{random.randint(1000, 9999)}",
+                        "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        "district": st.session_state.get("user_district", "") or get_scope_label(),
+                        "school": school,
+                        "circuit": school_profile.get("Circuit", ""),
+                        "school_type": school_profile.get("School_Type", "Not Specified"),
+                        "student_id": student_id.strip(),
+                        "student_name": student_name.strip(),
+                        "aggregate": aggregate,
+                        "best_six_raw_total": round(float(best_six_raw_total), 1),
+                        "placement": placement,
+                        "placement_category": placement_category,
+                        "created_by": st.session_state.get("current_user", ""),
+                    }
+                )
+                create_notification(
+                    event_type="manual_prediction_saved",
+                    message=(
+                        f"Manual placement prediction saved by Headteacher {st.session_state.get('current_user', 'Headteacher')} for {student_name.strip()} "
+                        f"at {school}: {placement}."
+                    ),
+                    target_role="Director",
+                    school=school,
+                    circuit=school_profile.get("Circuit", ""),
+                    student_id=student_id.strip(),
+                    student_name=student_name.strip(),
+                    created_by=st.session_state.get("current_user", ""),
+                    district=st.session_state.get("user_district", "") or get_scope_label(),
+                )
+                st.success("Manual prediction saved. The Director dashboard will now include it in the school and circuit forecast summaries.")
+
+        st.caption("This manual predictor stores the latest placement forecast for the named student so the Director can compare predicted transition strength across schools and circuits.")
     render_scroll_to_top()
 
 
@@ -4485,7 +5422,7 @@ def headteacher_portal(df, subject_cols, school):
         manual_entry_form(df, subject_cols, school)
 
     with predictor_tab:
-        render_manual_grade_predictor()
+        render_manual_grade_predictor(school)
         render_student_predictor(school_df, subject_cols, "headteacher_predictor")
 
     with reports_tab:

@@ -6,3 +6,5 @@ plotly
 joblib
 scikit-learn
 fpdf
+gspread
+google-auth
