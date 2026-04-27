@@ -2175,21 +2175,6 @@ def login_ui():
             "Create the Director account for a new district or municipality. Each Director registration now requires a one-time BloomCore access code from the platform owner, and that code expires immediately after use."
         )
 
-        with st.expander("Platform Owner: Generate One-Time Director Access Code"):
-            st.caption(
-                "Use your private owner passphrase to generate a one-time code for the next Director registration. Set the environment variable EDUPULSE_OWNER_SECRET in production so only you can generate these codes."
-            )
-            owner_secret = st.text_input("Owner Passphrase", type="password", key="owner_director_secret")
-            if st.button("Generate Director Access Code", key="generate_director_access_code"):
-                if owner_secret.strip() != get_platform_owner_secret():
-                    st.error("Invalid owner passphrase.")
-                else:
-                    new_director_code = generate_director_registration_key()
-                    set_director_registration_key(new_director_code)
-                    st.session_state["auth_flash_message"] = f"New one-time Director access code generated: {new_director_code}"
-                    st.session_state["auth_flash_severity"] = "success"
-                    st.rerun()
-
         if active_config["director_registration_key"]:
             st.info(
                 f"Active Director access code: {active_config['director_registration_key']}"
