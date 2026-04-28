@@ -17,6 +17,9 @@ ENV/
 *.log
 .DS_Store
 
+# Streamlit secrets (never commit credentials)
+.streamlit/secrets.toml
+
 # Large model files (Optional)
 # If your .joblib is over 100MB, you should use Git LFS or 
 # host it on Google Drive, but for now, we will leave it out 
