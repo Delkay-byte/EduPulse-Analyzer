@@ -285,6 +285,47 @@ MASTER_CREDENTIALS = {
     }
 }
 
+# Add this to your file paths at the top of analyser_app.py
+DIRECTOR_KEYS_FILE = "director_keys.json"
+
+def init_director_keys():
+    """
+    Creates the vault if it doesn't exist. 
+    I've added one master key to get you started!
+    """
+    if not os.path.exists(DIRECTOR_KEYS_FILE):
+        initial_keys = {
+            "BLOOMCORE-MASTER-2026": {"status": "unused"}
+        }
+        with open(DIRECTOR_KEYS_FILE, "w") as f:
+            json.dump(initial_keys, f)
+
+def validate_and_burn_director_key(entered_key):
+    """
+    Checks if a key is valid and unused. If yes, it marks it as 'used' (burns it)
+    so no other district can ever use it again.
+    """
+    # 1. Open the vault and check the keys
+    if not os.path.exists(DIRECTOR_KEYS_FILE):
+        return False
+        
+    with open(DIRECTOR_KEYS_FILE, "r") as f:
+        keys_db = json.load(f)
+        
+    # 2. Check if the key exists AND hasn't been used yet
+    if entered_key in keys_db and keys_db[entered_key]["status"] == "unused":
+        
+        # 3. The key is good! Now we "burn" it by changing the status to used.
+        keys_db[entered_key]["status"] = "used"
+        
+        # 4. Save the locked vault back to the file
+        with open(DIRECTOR_KEYS_FILE, "w") as f:
+            json.dump(keys_db, f)
+            
+        return True # Registration can proceed!
+    else:
+        # Key is fake, mistyped, or already burned.
+        return False
 
 # ============================================================
 # 2. STREAMLIT PAGE CONFIGURATION, STYLING, AND SESSION STATE
@@ -2231,6 +2272,20 @@ def login_ui():
         st.write(
             "Create the Director account for a new district or municipality. Each Director registration now requires a one-time BloomCore access code from the platform owner, and that code expires immediately after use."
         )
+
+        with st.expander("🔍 Connection Diagnostics (expand if registration fails)", expanded=False):
+            _sheet_id = resolve_google_sheet_id()
+            _svc_json = resolve_google_service_account_json_string()
+            _test_sheet = get_google_sheet()
+            _last_err = get_google_sheet_last_error()
+            st.write(f"**Sheet ID found:** `{bool(_sheet_id)}` → `{_sheet_id[:20]}…`" if _sheet_id else "**Sheet ID found:** ❌ None")
+            st.write(f"**Service account JSON found:** `{bool(_svc_json)}`")
+            if _test_sheet is not None:
+                st.success("✅ Google Sheets connection OK")
+                _raw = active_config.get("director_registration_key", "")
+                st.write(f"**OTP in sheet:** `{_raw if _raw else '(empty)'}`")
+            else:
+                st.error(f"❌ Google Sheets connection FAILED: {_last_err}")
 
         if active_config["director_registration_key"]:
             st.info(
