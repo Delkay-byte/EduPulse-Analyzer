@@ -646,15 +646,26 @@ def resolve_google_sheet_id():
 
 
 def resolve_google_service_account_json_string():
+    # I will first check if the environment variable is set directly
     raw = os.environ.get(GOOGLE_SERVICE_ACCOUNT_JSON_ENV, "").strip()
     if raw:
         return raw
+
+    # Next, I'll check if the JSON was saved directly as a string in Streamlit Secrets
     value = _streamlit_secret_get(GOOGLE_SERVICE_ACCOUNT_JSON_ENV)
     if value is not None and str(value).strip():
         return str(value).strip()
+
+    # Finally, I will check if it was formatted under the [gcp_service_account] section
     gcp_block = _streamlit_secret_get("gcp_service_account")
-    if isinstance(gcp_block, dict):
-        return json.dumps(gcp_block)
+
+    # Instead of using isinstance() which fails on Streamlit's custom Secrets object,
+    # I will simply check if the block exists, and convert it to a standard dictionary!
+    if gcp_block is not None:
+        # I am converting it to dict() so json.dumps can easily serialize it to text
+        return json.dumps(dict(gcp_block))
+
+    # If nothing is found, I will return an empty string
     return ""
 
 
