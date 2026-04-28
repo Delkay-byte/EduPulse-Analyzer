@@ -1,2 +1,3 @@
 username,password,role,school,district,security_key
 Saviour Amegayie,pbkdf2_sha256$f8060a302e94ab668dcd68596fc108f6$02b2a5b089963ca58d0cc15509a02ef45c67ae06ae41b25948b5ff6d59532354,Director,ALL,Akatsi_South,AKATSISOUTH-3091
+Sir Zack,pbkdf2_sha256$26e6c1791b00d8507374b731555b4386$7ff98ab5bba962f5fbfb076f7c605ac6243ef91a427c88af6f8a67161fcea6c7,Headteacher,Kpota JHS,Akatsi_South,
