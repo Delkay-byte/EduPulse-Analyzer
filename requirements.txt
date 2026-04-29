@@ -8,3 +8,4 @@ scikit-learn
 fpdf
 gspread
 google-auth
+pdfplumber

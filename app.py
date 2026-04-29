@@ -27,6 +27,10 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     gspread = None
     Credentials = None
+try:
+    import pdfplumber
+except Exception:
+    pdfplumber = None
 
 
 # ============================================================
@@ -2902,197 +2906,131 @@ def decode_pdf_stream_bytes(object_bytes):
     return stream_bytes
 
 
-def build_pdf_object_map(pdf_bytes):
-    return {int(object_id): object_body for object_id, object_body in re.findall(rb"(\d+) 0 obj(.*?)endobj", pdf_bytes, re.S)}
-
-
-def parse_pdf_cmap(cmap_bytes):
-    cmap_text = cmap_bytes.decode("latin-1", errors="ignore")
-    cmap = {}
-    for start_hex, end_hex, dest_hex in re.findall(r"<([0-9A-F]+)>\s*<([0-9A-F]+)>\s*<([0-9A-F]+)>", cmap_text):
-        start_code = int(start_hex, 16)
-        end_code = int(end_hex, 16)
-        dest_code = int(dest_hex, 16)
-        for offset, source_code in enumerate(range(start_code, end_code + 1)):
-            cmap[source_code] = chr(dest_code + offset)
-    for source_hex, dest_hex in re.findall(r"<([0-9A-F]+)>\s*<([0-9A-F]+)>", cmap_text):
-        source_code = int(source_hex, 16)
-        if source_code not in cmap:
-            cmap[source_code] = chr(int(dest_hex, 16))
-    return cmap
-
-
-def decode_pdf_hex_text(hex_text, cmap):
-    output = []
-    for index in range(0, len(hex_text), 4):
-        code = int(hex_text[index:index + 4], 16)
-        output.append(cmap.get(code, ""))
-    return "".join(output)
-
-
-def extract_pdf_text_tokens(stream_bytes, font_maps, page_number):
-    stream_text = stream_bytes.decode("latin-1", errors="ignore")
-    token_pattern = re.compile(
-        r"/(?P<font>F\d+)\s+[\d.]+\s+Tf|"
-        r"(?P<tdx>-?[\d.]+)\s+(?P<tdy>-?[\d.]+)\s+Td|"
-        r"(?P<a>-?[\d.]+)\s+(?P<b>-?[\d.]+)\s+(?P<c>-?[\d.]+)\s+(?P<d>-?[\d.]+)\s+(?P<tmx>-?[\d.]+)\s+(?P<tmy>-?[\d.]+)\s+Tm|"
-        r"<(?P<tj>[0-9A-F]+)>\s*Tj|"
-        r"\[(?P<tjarr>.*?)\]\s*TJ",
-        re.S,
-    )
-
-    current_font = None
-    current_x = 0.0
-    current_y = 0.0
-    tokens = []
-    for match in token_pattern.finditer(stream_text):
-        if match.group("font"):
-            current_font = match.group("font")
-        elif match.group("tmx"):
-            current_x = float(match.group("tmx"))
-            current_y = float(match.group("tmy"))
-        elif match.group("tdx"):
-            current_x += float(match.group("tdx"))
-            current_y += float(match.group("tdy"))
-        elif match.group("tj") and current_font in font_maps:
-            decoded = decode_pdf_hex_text(match.group("tj"), font_maps[current_font]).strip()
-            if decoded:
-                tokens.append({"page": page_number, "x": current_x, "y": current_y, "text": decoded})
-        elif match.group("tjarr") and current_font in font_maps:
-            hex_chunks = re.findall(r"<([0-9A-F]+)>", match.group("tjarr"))
-            decoded = "".join(decode_pdf_hex_text(chunk, font_maps[current_font]) for chunk in hex_chunks).strip()
-            if decoded:
-                tokens.append({"page": page_number, "x": current_x, "y": current_y, "text": decoded})
-    return tokens
-
-
-def merge_pdf_tokens(token_list):
-    merged_parts = []
-    previous_token = ""
-    for token in token_list:
-        current_text = str(token.get("text", "")).strip()
-        if not current_text:
-            continue
-        join_without_space = len(previous_token) == 1 and len(current_text) == 1
-        separator = "" if not merged_parts or join_without_space else " "
-        merged_parts.append(separator + current_text)
-        previous_token = current_text
-    merged_text = "".join(merged_parts)
-    merged_text = re.sub(r"\s+([,./-])", r"\1", merged_text)
-    merged_text = re.sub(r"([/.-])\s+", r"\1", merged_text)
-    merged_text = re.sub(r"\s+", " ", merged_text).strip()
-    return merged_text
-
-
-def classify_waec_token_column(x_value):
-    if x_value < WAEC_COLUMN_BOUNDARIES["index"]:
-        return "index"
-    if x_value < WAEC_COLUMN_BOUNDARIES["name"]:
-        return "name"
-    if x_value < WAEC_COLUMN_BOUNDARIES["gender"]:
-        return "gender"
-    if x_value < WAEC_COLUMN_BOUNDARIES["dob"]:
-        return "dob"
-    return "results"
-
-
 def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
-    object_map = build_pdf_object_map(pdf_bytes)
-    if not object_map:
-        raise ValueError("The uploaded PDF could not be parsed as a WAEC result listing.")
+    """
+    Extract WAEC result data from PDF using pdfplumber.
+    Returns (school_name, extracted_rows) where extracted_rows is a list of dicts
+    with keys: Student_ID, Student_Name, Gender, Date_of_Birth, Official_Results_Raw
+    """
+    if pdfplumber is None:
+        raise ValueError("pdfplumber is not installed. Please install it to process PDF files.")
 
-    page_object_ids = [object_id for object_id, object_body in object_map.items() if b"/Type /Page" in object_body and b"/Contents" in object_body]
-    page_tokens = []
-    pre_header_lines = []
-
-    for page_number, page_object_id in enumerate(sorted(page_object_ids), start=1):
-        page_object = object_map[page_object_id]
-        font_maps = {}
-        for font_name, font_object_id in re.findall(rb"/([A-Za-z]\d+)\s+(\d+) 0 R", page_object):
-            font_object = object_map.get(int(font_object_id))
-            if not font_object:
-                continue
-            to_unicode_match = re.search(rb"/ToUnicode\s+(\d+) 0 R", font_object)
-            if not to_unicode_match:
-                continue
-            cmap_object = object_map.get(int(to_unicode_match.group(1)))
-            if not cmap_object:
-                continue
-            font_maps[font_name.decode("latin-1")] = parse_pdf_cmap(decode_pdf_stream_bytes(cmap_object))
-
-        contents_match = re.search(rb"/Contents\s+(\[.*?\]|\d+\s+0\s+R)", page_object, re.S)
-        if not contents_match:
-            continue
-        content_object_ids = [int(value) for value in re.findall(rb"(\d+)\s+0\s+R", contents_match.group(1))]
-        for content_object_id in content_object_ids:
-            stream_bytes = decode_pdf_stream_bytes(object_map.get(content_object_id, b""))
-            if stream_bytes:
-                page_tokens.extend(extract_pdf_text_tokens(stream_bytes, font_maps, page_number))
-
-    if not page_tokens:
-        raise ValueError("No readable text was found in the uploaded WAEC PDF.")
-
-    page_tokens = sorted(page_tokens, key=lambda item: (item["page"], item["y"], item["x"]))
-    grouped_lines = []
-    for token in page_tokens:
-        if not grouped_lines:
-            grouped_lines.append({"page": token["page"], "y": token["y"], "tokens": [token]})
-            continue
-        previous_group = grouped_lines[-1]
-        if token["page"] == previous_group["page"] and abs(token["y"] - previous_group["y"]) <= 4:
-            previous_group["tokens"].append(token)
-        else:
-            grouped_lines.append({"page": token["page"], "y": token["y"], "tokens": [token]})
-
-    line_rows = []
-    header_seen = False
-    for group in grouped_lines:
-        grouped_tokens = {"index": [], "name": [], "gender": [], "dob": [], "results": []}
-        for token in sorted(group["tokens"], key=lambda item: item["x"]):
-            grouped_tokens[classify_waec_token_column(token["x"])] .append(token)
-        line_data = {key: merge_pdf_tokens(value) for key, value in grouped_tokens.items()}
-        line_data["all_text"] = " ".join([value for value in line_data.values() if value]).strip()
-        if not header_seen:
-            pre_header_lines.append(line_data["all_text"])
-            if "INDEX NUMBER" in line_data["all_text"].upper() and "RESULTS" in line_data["all_text"].upper():
-                header_seen = True
-            continue
-        line_rows.append(line_data)
-
+    all_lines = []
     school_candidates = []
-    for line_text in pre_header_lines:
-        clean_text = re.sub(r"\s+", " ", line_text).strip()
-        upper_text = clean_text.upper()
-        if not clean_text:
-            continue
-        if any(flag in upper_text for flag in ["RESULTS LISTING", "WAEC", "DATE", "SCHOOL", "AFRICAN EXAMINATIONS COUNCIL"]):
-            continue
-        if len(clean_text) >= 5:
-            school_candidates.append(clean_text)
+    header_seen = False
+
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            # Extract words with their coordinates
+            words = page.extract_words()
+            if not words:
+                continue
+
+            # Group words by vertical position (y-coordinate) to form lines
+            lines_dict = {}
+            for word in words:
+                y = round(float(word.get("top", 0)), 0)
+                if y not in lines_dict:
+                    lines_dict[y] = []
+                lines_dict[y].append(word)
+
+            # Process each line
+            for y in sorted(lines_dict.keys()):
+                line_words = sorted(lines_dict[y], key=lambda w: w.get("x0", 0))
+                line_text = " ".join([w.get("text", "") for w in line_words]).strip()
+
+                if not line_text:
+                    continue
+
+                # Check for header line
+                upper_text = line_text.upper()
+                if "INDEX NUMBER" in upper_text and "RESULTS" in upper_text:
+                    header_seen = True
+                    continue
+
+                # Collect potential school names from pre-header lines
+                if not header_seen:
+                    clean_text = re.sub(r"\s+", " ", line_text).strip()
+                    if clean_text and len(clean_text) >= 5:
+                        if not any(flag in clean_text.upper() for flag in ["RESULTS LISTING", "WAEC", "DATE", "SCHOOL", "AFRICAN EXAMINATIONS COUNCIL", "INDEX NUMBER", "RESULTS"]):
+                            school_candidates.append(clean_text)
+                    continue
+
+                # Parse student data lines after header
+                if header_seen:
+                    all_lines.append(line_text)
+
+    if not all_lines:
+        raise ValueError("No readable text was found in the uploaded WAEC PDF. Please ensure it is a digital PDF and not a scanned image.")
+
+    # Determine school name
     school_name = school_candidates[0] if school_candidates else Path(fallback_school_name).stem.replace("_", " ").strip()
 
+    # Parse student records from lines
     extracted_rows = []
     current_row = None
-    for line_data in line_rows:
-        index_digits = re.sub(r"\D", "", line_data.get("index", ""))
-        if len(index_digits) >= 10:
-            if current_row:
-                extracted_rows.append(current_row)
-            current_row = {
-                "Student_ID": index_digits[:10],
-                "Student_Name": line_data.get("name", "").strip(),
-                "Gender": line_data.get("gender", "").strip(),
-                "Date_of_Birth": line_data.get("dob", "").strip(),
-                "Official_Results_Raw": [line_data.get("results", "").strip()],
-            }
-            continue
-        if current_row and line_data.get("results", "").strip():
-            current_row["Official_Results_Raw"].append(line_data.get("results", "").strip())
-    if current_row:
-        extracted_rows.append(current_row)
 
-    for row in extracted_rows:
-        row["Official_Results_Raw"] = " ".join([part for part in row["Official_Results_Raw"] if part]).strip()
+    for line_text in all_lines:
+        # Look for index number pattern (10 digits)
+        index_match = re.search(r"(\d{10})", line_text)
+
+        if index_match:
+            # Save previous row if exists
+            if current_row:
+                current_row["Official_Results_Raw"] = " ".join(current_row["Official_Results_Raw"]).strip()
+                extracted_rows.append(current_row)
+
+            # Parse the line - split by multiple spaces to identify columns
+            parts = re.split(r"\s{2,}", line_text.strip())
+            index_num = index_match.group(1)
+
+            # Extract name (typically after index, before gender/dob)
+            name = ""
+            gender = ""
+            dob = ""
+            results = ""
+
+            # Find which part contains the index number
+            for i, part in enumerate(parts):
+                if index_num in part:
+                    # Name is usually the next substantial part
+                    if i + 1 < len(parts) and len(parts[i + 1]) > 3:
+                        name = parts[i + 1].strip()
+                    break
+
+            # Look for gender (F or M)
+            gender_match = re.search(r"\b([FM])\b", line_text)
+            if gender_match:
+                gender = gender_match.group(1)
+
+            # Look for date of birth pattern (DD/MM/YYYY or similar)
+            dob_match = re.search(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", line_text)
+            if dob_match:
+                dob = dob_match.group(1)
+
+            # Results are typically after DOB or at the end
+            results_match = re.search(r"(?:[FM]\s+)?(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s+)?(.+)$", line_text)
+            if results_match:
+                results_text = results_match.group(1).strip()
+                # Exclude the index number from results
+                results = results_text.replace(index_num, "").strip()
+
+            current_row = {
+                "Student_ID": index_num,
+                "Student_Name": name,
+                "Gender": gender,
+                "Date_of_Birth": dob,
+                "Official_Results_Raw": [results] if results else [],
+            }
+        else:
+            # Continuation line - append to current row's results
+            if current_row:
+                current_row["Official_Results_Raw"].append(line_text.strip())
+
+    # Don't forget the last row
+    if current_row:
+        current_row["Official_Results_Raw"] = " ".join(current_row["Official_Results_Raw"]).strip()
+        extracted_rows.append(current_row)
 
     return school_name, extracted_rows
 
