@@ -2279,24 +2279,10 @@ def login_ui():
             )
 
     elif choice == "Register Director":
-        st.title("???? Director Registration")
+        st.title("📋 Director Registration")
         st.write(
             "Create the Director account for a new district or municipality. Each Director registration now requires a one-time BloomCore access code from the platform owner, and that code expires immediately after use."
         )
-
-        with st.expander("🔍 Connection Diagnostics (expand if registration fails)", expanded=False):
-            _sheet_id = resolve_google_sheet_id()
-            _svc_json = resolve_google_service_account_json_string()
-            _test_sheet = get_google_sheet()
-            _last_err = get_google_sheet_last_error()
-            st.write(f"**Sheet ID found:** `{bool(_sheet_id)}` → `{_sheet_id[:20]}…`" if _sheet_id else "**Sheet ID found:** ❌ None")
-            st.write(f"**Service account JSON found:** `{bool(_svc_json)}`")
-            if _test_sheet is not None:
-                st.success("✅ Google Sheets connection OK")
-                _raw = active_config.get("director_registration_key", "")
-                st.write(f"**OTP in sheet:** `{_raw if _raw else '(empty)'}`")
-            else:
-                st.error(f"❌ Google Sheets connection FAILED: {_last_err}")
 
         if active_config["director_registration_key"]:
             st.info(
