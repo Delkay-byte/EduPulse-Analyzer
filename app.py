@@ -833,6 +833,64 @@ def consume_director_registration_key():
     save_app_config(config)
 
 
+def validate_password_strength(password):
+    """
+    Check password strength requirements.
+    Returns (is_valid, requirements_list) where requirements_list is a list of tuples (requirement, is_met).
+    """
+    requirements = [
+        ("At least 8 characters", len(password) >= 8),
+        ("At least 1 uppercase letter (A-Z)", any(c.isupper() for c in password)),
+        ("At least 1 lowercase letter (a-z)", any(c.islower() for c in password)),
+        ("At least 1 digit (0-9)", any(c.isdigit() for c in password)),
+        ("At least 1 special symbol (!@#$%^&* etc.)", any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password)),
+    ]
+    is_valid = all(met for _, met in requirements)
+    return is_valid, requirements
+
+
+def render_password_strength_indicator(password):
+    """Render a visual password strength indicator in Streamlit."""
+    if not password:
+        return
+    is_valid, requirements = validate_password_strength(password)
+    score = sum(1 for _, met in requirements if met)
+    total = len(requirements)
+    if score <= 2:
+        color, emoji, label = "#ff4b4b", "🔴", "Weak"
+    elif score <= 4:
+        color, emoji, label = "#ffa421", "🟡", "Moderate"
+    else:
+        color, emoji, label = "#2ecc71", "🟢", "Strong"
+    st.markdown(
+        f"<div style='margin: -10px 0 10px 0;'>"
+        f"<span style='color: {color}; font-weight: 600;'>{emoji} Password Strength: {label} ({score}/{total})</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    with st.expander("Password Requirements", expanded=not is_valid):
+        for req, met in requirements:
+            icon = "✅" if met else "❌"
+            color = "#2ecc71" if met else "#999"
+            st.markdown(f"<span style='color: {color};'>{icon} {req}</span>", unsafe_allow_html=True)
+
+
+def render_password_match_indicator(password, confirm_password):
+    """Render a visual indicator showing if passwords match."""
+    if not confirm_password:
+        return
+    if password == confirm_password:
+        st.markdown(
+            "<div style='margin: -10px 0 10px 0;'><span style='color: #2ecc71; font-weight: 600;'>✅ Passwords match</span></div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            "<div style='margin: -10px 0 10px 0;'><span style='color: #ff4b4b; font-weight: 600;'>❌ Passwords do not match</span></div>",
+            unsafe_allow_html=True,
+        )
+
+
 def director_registration_key_is_valid(input_key):
     config = load_app_config()
     return bool(str(input_key).strip() and str(input_key).strip() == str(config.get("director_registration_key", "")).strip())
@@ -2307,12 +2365,24 @@ def login_ui():
             director_access_code = st.text_input("BloomCore Director Access Code", type="password")
             district_name = st.text_input("District/Municipal Name")
             username = st.text_input("Director Username")
-            password = st.text_input("Password", type="password")
-            confirm_password = st.text_input("Confirm Password", type="password")
+            password = st.text_input("Password", type="password", key="dir_reg_password")
+            confirm_password = st.text_input("Confirm Password", type="password", key="dir_reg_confirm_password")
 
-            if st.form_submit_button("Create Director Account"):
+            # Real-time password indicators (displayed inside form but update on each interaction)
+            password = st.session_state.get("dir_reg_password", "")
+            confirm_password = st.session_state.get("dir_reg_confirm_password", "")
+            if password:
+                render_password_strength_indicator(password)
+            if confirm_password:
+                render_password_match_indicator(password, confirm_password)
+
+            submitted = st.form_submit_button("Create Director Account")
+            if submitted:
+                is_strong, _ = validate_password_strength(password)
                 if not director_registration_key_is_valid(director_access_code):
                     st.error("The Director access code is invalid or has already been used.")
+                elif not is_strong:
+                    st.error("Password does not meet security requirements. Please check the requirements above and try again.")
                 elif password != confirm_password:
                     st.error("Passwords do not match.")
                 else:
@@ -2363,12 +2433,24 @@ def login_ui():
 
             with st.form("registration_form"):
                 username = st.text_input("New Username")
-                password = st.text_input("New Password", type="password")
-                confirm_password = st.text_input("Confirm Password", type="password")
+                password = st.text_input("New Password", type="password", key="ht_reg_password")
+                confirm_password = st.text_input("Confirm Password", type="password", key="ht_reg_confirm_password")
                 school = st.selectbox("Select Your School", school_options)
 
-                if st.form_submit_button("Create Account"):
-                    if password != confirm_password:
+                # Real-time password indicators
+                password = st.session_state.get("ht_reg_password", "")
+                confirm_password = st.session_state.get("ht_reg_confirm_password", "")
+                if password:
+                    render_password_strength_indicator(password)
+                if confirm_password:
+                    render_password_match_indicator(password, confirm_password)
+
+                submitted = st.form_submit_button("Create Account")
+                if submitted:
+                    is_strong, _ = validate_password_strength(password)
+                    if not is_strong:
+                        st.error("Password does not meet security requirements. Please check the requirements above and try again.")
+                    elif password != confirm_password:
                         st.error("Passwords do not match.")
                     else:
                         try:
