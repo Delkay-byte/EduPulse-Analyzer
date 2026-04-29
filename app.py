@@ -4157,8 +4157,12 @@ def build_scope_report_tables(scope_df, subject_cols, scope_label, school_sync_d
         ).sort_values("Average Score", ascending=True)
 
     if not scope_df.empty and subject_cols and "School_Name" in scope_df.columns:
+        # Convert subject columns to numeric before groupby
+        numeric_df = scope_df.copy()
+        for subject in subject_cols:
+            numeric_df[subject] = pd.to_numeric(numeric_df[subject], errors="coerce")
         school_rankings = (
-            scope_df.groupby("School_Name")[subject_cols]
+            numeric_df.groupby("School_Name")[subject_cols]
             .mean()
             .mean(axis=1)
             .reset_index(name="Actual BECE Average")
@@ -5355,7 +5359,7 @@ def render_school_dashboard(school_df, subject_cols):
 # 12. HEADTEACHER ENTRY FORMS AND WHAT-IF PREDICTION WORKSPACE
 # ============================================================
 def manual_entry_form(df, subject_cols, school):
-    st.markdown("### ??? Add Single Student")
+    st.markdown("### ➕ Add Single Student")
     st.info("Use this update form to add one new student after the initial school CSV upload. The record syncs immediately to the Director dashboard under the same school and mapped circuit.")
     st.caption("Attendance is no longer entered here because it does not appear on the official WAEC result file. EduPulse will still keep an attendance baseline in the background for forecasting use.")
 
@@ -5468,7 +5472,7 @@ def manual_entry_form(df, subject_cols, school):
             )
             st.cache_data.clear()
             st.session_state["portal_flash_message"] = (
-                f"??? Student added successfully: {student_name.strip()} ({final_student_id.strip()}) has been synced to {school}."
+                f"✅ Student added successfully: {student_name.strip()} ({final_student_id.strip()}) has been synced to {school}."
             )
             st.session_state["portal_flash_severity"] = "success"
             st.rerun()
