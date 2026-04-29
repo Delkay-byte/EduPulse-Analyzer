@@ -3032,6 +3032,12 @@ def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
         current_row["Official_Results_Raw"] = " ".join(current_row["Official_Results_Raw"]).strip()
         extracted_rows.append(current_row)
 
+    # Type-Safety: Force all extracted data to strings to prevent float crashes
+    for row in extracted_rows:
+        for key in row:
+            if row[key] is not None and not isinstance(row[key], str):
+                row[key] = str(row[key])
+
     return school_name, extracted_rows
 
 
@@ -5790,8 +5796,8 @@ def render_student_predictor(display_df, subject_cols, key_prefix):
 def director_portal(df, subject_cols, data_status):
     scope_label = get_scope_label()
     st.title(f"🌐 Director Dashboard: {scope_label}")
-    leaderboard_tab, audit_tab, predictor_tab, reports_tab, data_setup_tab = st.tabs(
-        [f"🏆 {scope_label} Leaderboard", "📋 Student Audit", "🔍 Search & Predict", "📦 Reports & Alerts", "🗂️ Data Setup"]
+    leaderboard_tab, audit_tab, predictor_tab, reports_tab, data_mgmt_tab = st.tabs(
+        [f"🏆 {scope_label} Leaderboard", "📋 Student Audit", "🔍 Search & Predict", "📦 Reports & Alerts", "⚙️ Data Management"]
     )
 
     with leaderboard_tab:
@@ -5808,8 +5814,84 @@ def director_portal(df, subject_cols, data_status):
         st.markdown("---")
         render_communication_center(df, subject_cols, "director_comms")
 
-    with data_setup_tab:
-        render_director_data_setup(data_status, standalone=False, key_prefix="director_dashboard_setup")
+    with data_mgmt_tab:
+        st.header("⚙️ District System Management")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("🗺️ Update Circuit Mapping")
+            st.info("Re-upload the circuits CSV to update school-circuit mappings.")
+            render_director_data_setup(data_status, standalone=False, key_prefix="mgmt_circuit_update")
+
+        with col2:
+            st.subheader("📄 Sync WAEC Result PDFs")
+            st.info("Upload official BECE PDF result files to extract and analyze student performance.")
+
+            waec_pdfs = st.file_uploader(
+                "Upload WAEC PDF Results",
+                type="pdf",
+                accept_multiple_files=True,
+                key="mgmt_waec_pdf_upload"
+            )
+
+            if waec_pdfs:
+                st.write(f"**{len(waec_pdfs)}** PDF file(s) selected")
+
+                if st.button("🔄 Process & Sync PDFs", type="primary", key="mgmt_process_pdfs"):
+                    progress_bar = st.progress(0)
+                    success_count = 0
+                    error_list = []
+
+                    for index, pdf_file in enumerate(waec_pdfs):
+                        try:
+                            pdf_bytes = pdf_file.read()
+                            school_name, extracted_rows = extract_waec_pdf_rows(pdf_bytes, fallback_school_name=pdf_file.name)
+
+                            if extracted_rows:
+                                # Convert to DataFrame and force string types
+                                pdf_df = pd.DataFrame(extracted_rows)
+                                # Force all columns to string/object type to prevent float crashes
+                                for col in pdf_df.columns:
+                                    pdf_df[col] = pdf_df[col].astype(str).replace("nan", "")
+
+                                # Merge with existing data
+                                existing_df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
+                                if not existing_df.empty:
+                                    # Remove any existing students with same IDs
+                                    existing_ids = pdf_df["Student_ID"].tolist()
+                                    existing_df = existing_df[~existing_df["Student_ID"].isin(existing_ids)]
+                                    combined_df = pd.concat([existing_df, pdf_df], ignore_index=True)
+                                else:
+                                    combined_df = pdf_df
+
+                                write_table_df(DATA_FILE, combined_df, EXPECTED_DATA_COLUMNS)
+                                success_count += 1
+
+                                # Create notification
+                                create_notification(
+                                    event_type="waec_pdf_synced",
+                                    message=f"PDF synced for {school_name}: {len(extracted_rows)} students extracted by Director.",
+                                    target_role="Director",
+                                    school=school_name,
+                                    created_by=st.session_state.get("current_user", ""),
+                                    district=scope_label,
+                                )
+                        except Exception as exc:
+                            error_list.append(f"{pdf_file.name}: {exc}")
+
+                        progress_bar.progress((index + 1) / len(waec_pdfs))
+
+                    if success_count > 0:
+                        st.success(f"✅ Successfully processed {success_count} PDF file(s). {len(error_list)} error(s).")
+                        st.cache_data.clear()
+                    if error_list:
+                        with st.expander("⚠️ Processing Errors"):
+                            for err in error_list:
+                                st.error(err)
+
+                    if success_count > 0:
+                        st.rerun()
 
 
 def render_headteacher_upload_required_screen(school):
@@ -5869,9 +5951,17 @@ def main():
     render_sidebar(df, subject_cols, role, school)
 
     if role == "Director":
-        if not circuit_status["ready"]:
+        # Create persistent flag so app remembers if Director is 'Ready'
+        if "director_setup_complete" not in st.session_state:
+            st.session_state.director_setup_complete = circuit_status["ready"]
+
+        # Only block the view if file is missing AND we haven't cleared setup yet
+        if not st.session_state.director_setup_complete and not circuit_status["ready"]:
             render_director_data_setup(data_status, standalone=True, key_prefix="director_first_run_setup")
             return
+
+        # Once we pass the gate, keep flag True for this session
+        st.session_state.director_setup_complete = True
         director_portal(df, subject_cols, data_status)
     elif role == "Headteacher":
         if not circuit_status["ready"]:
