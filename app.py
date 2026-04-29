@@ -4193,7 +4193,10 @@ def build_scope_report_tables(scope_df, subject_cols, scope_label, school_sync_d
                 pd.concat(
                     [
                         scope_df[["Gender"]].rename(columns={"Gender": "Gender"}),
-                        scope_df[subject_cols].mean(axis=1).rename("Average_Subject_Score"),
+                        scope_df[subject_cols]
+                        .apply(pd.to_numeric, errors="coerce")
+                        .mean(axis=1)
+                        .rename("Average_Subject_Score"),
                     ],
                     axis=1,
                 )
