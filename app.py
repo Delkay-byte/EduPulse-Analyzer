@@ -46,7 +46,7 @@ CALIBRATION_FILE = "school_calibration.json"
 BRAND_IMAGE = r"C:\Users\SAVIOUR\Downloads\app_logo.png"
 FINAL_SUFFIX = "_Final_BECE"
 PLACEMENT_ORDER = ["Category A", "Category B", "Category C", "Category D/SP"]
-USERS_COLUMNS = ["username", "password", "role", "school", "district", "security_key"]
+USERS_COLUMNS = ["username", "password", "role", "school", "district", "security_key", "email", "security_question", "security_answer"]
 EXPECTED_CIRCUIT_COLUMNS = ["School_Name", "Circuit", "School_Type"]
 NOTIFICATION_COLUMNS = [
     "notification_id",
@@ -1157,11 +1157,14 @@ def initialize_empty_circuit_dataset():
     write_table_df(CIRCUITS_FILE, pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS), EXPECTED_CIRCUIT_COLUMNS)
 
 
-def register_user(username, password, role, school, district="", security_key=""):
+def register_user(username, password, role, school, district="", security_key="", email="", security_question="", security_answer=""):
     username = username.strip()
     school = school.strip()
     district = district.strip()
     security_key = security_key.strip()
+    email = email.strip()
+    security_question = security_question.strip()
+    security_answer = security_answer.strip()
 
     if not username:
         raise ValueError("Username is required.")
@@ -1183,6 +1186,9 @@ def register_user(username, password, role, school, district="", security_key=""
     if username in existing_users:
         raise ValueError("That username already exists.")
 
+    # Hash security answer if provided
+    hashed_security_answer = hash_security_answer(security_answer) if security_answer else ""
+
     users_df = pd.concat(
         [
             users_df,
@@ -1195,6 +1201,9 @@ def register_user(username, password, role, school, district="", security_key=""
                         "school": school,
                         "district": district,
                         "security_key": security_key,
+                        "email": email,
+                        "security_question": security_question,
+                        "security_answer": hashed_security_answer,
                     }
                 ]
             ),
@@ -1203,6 +1212,102 @@ def register_user(username, password, role, school, district="", security_key=""
     )
     save_users_df(users_df)
     return {"username": username, "district": district, "security_key": security_key, "school": school}
+
+
+# ============================================================
+# 4b. PASSWORD RESET AND RECOVERY FUNCTIONS
+# ============================================================
+SECURITY_QUESTION_OPTIONS = [
+    "What was the name of your first school?",
+    "What is your mother's maiden name?",
+    "What was the name of your first pet?",
+    "What city were you born in?",
+    "What is your favorite book?",
+]
+
+
+def hash_security_answer(answer):
+    """Hash security answer for storage (case-insensitive)."""
+    normalized = str(answer).strip().lower()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def verify_security_answer(stored_hash, provided_answer):
+    """Verify a security answer against stored hash."""
+    return stored_hash == hash_security_answer(provided_answer)
+
+
+def generate_reset_token():
+    """Generate a secure random reset token."""
+    return secrets.token_urlsafe(32)
+
+
+def get_user_by_username(username):
+    """Get user record by username, returns None if not found."""
+    all_users = {**MASTER_CREDENTIALS, **load_users()}
+    return all_users.get(username)
+
+
+def update_user_password(username, new_password):
+    """Update a user's password. Returns True on success, False on failure."""
+    users_df = load_users_df()
+    if users_df.empty or username not in users_df["username"].values:
+        return False
+    hashed_password = hash_password(new_password)
+    users_df.loc[users_df["username"] == username, "password"] = hashed_password
+    save_users_df(users_df)
+    return True
+
+
+def verify_owner_secret(provided_secret):
+    """Verify the platform owner secret for admin password resets."""
+    return str(provided_secret).strip() == get_platform_owner_secret()
+
+
+def send_password_reset_email(user_email, reset_token, username):
+    """Send password reset email if SMTP is configured. Returns (success, message)."""
+    config = load_app_config()
+    smtp_host = config.get("smtp_host", "").strip()
+    smtp_port = int(config.get("smtp_port", "587"))
+    smtp_username = config.get("smtp_username", "").strip()
+    smtp_password = config.get("smtp_password", "").strip()
+    smtp_sender = config.get("smtp_sender_email", "").strip()
+    use_tls = str(config.get("smtp_use_tls", "true")).lower() == "true"
+
+    if not all([smtp_host, smtp_username, smtp_password, smtp_sender]):
+        return False, "Email service not configured. Please use security question or contact your Director."
+
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = smtp_sender
+        msg["To"] = user_email
+        msg["Subject"] = "EduPulse Password Reset Request"
+
+        body = f"""Hello {username},
+
+You requested a password reset for your EduPulse account.
+
+Your reset code is: {reset_token}
+
+Enter this code in the password reset page to set a new password.
+This code expires in 30 minutes.
+
+If you did not request this reset, please contact your Director immediately.
+
+---
+EduPulse Education Management System
+"""
+        msg.attach(MIMEText(body, "plain"))
+
+        server = smtplib.SMTP(smtp_host, smtp_port)
+        if use_tls:
+            server.starttls()
+        server.login(smtp_username, smtp_password)
+        server.sendmail(smtp_sender, user_email, msg.as_string())
+        server.quit()
+        return True, "Reset code sent to your email."
+    except Exception as exc:
+        return False, f"Failed to send email: {exc}"
 
 
 # ============================================================
@@ -2269,7 +2374,7 @@ def login_ui():
 
     st.write("---")
     st.title(f"🔐 {APP_TITLE}")
-    menu = ["Login", "Register Director", "Register Headteacher"]
+    menu = ["Login", "Register Director", "Register Headteacher", "Forgot Password"]
     if st.session_state.get("auth_nav") not in menu:
         st.session_state["auth_nav"] = "Login"
     choice = st.sidebar.selectbox("Navigation", menu, index=menu.index(st.session_state["auth_nav"]))
@@ -2342,6 +2447,142 @@ def login_ui():
                 redirect_to_login=True,
             )
 
+    elif choice == "Forgot Password":
+        st.title("🔑 Password Recovery")
+        st.write("Reset your password using one of the following methods:")
+
+        recovery_method = st.radio(
+            "Select Recovery Method",
+            ["Security Question", "Email Reset Code", "Owner Override (Admin)"],
+            help="Choose how you want to verify your identity and reset your password"
+        )
+
+        if recovery_method == "Security Question":
+            with st.form("security_question_reset"):
+                username = st.text_input("Username")
+                user = get_user_by_username(username) if username else None
+
+                if user and user.get("security_question"):
+                    st.info(f"Security Question: {user['security_question']}")
+                    security_answer = st.text_input("Your Answer", type="password")
+                    new_password = st.text_input("New Password", type="password", key="sq_new_password")
+                    confirm_password = st.text_input("Confirm New Password", type="password", key="sq_confirm_password")
+
+                    if new_password:
+                        render_password_strength_indicator(new_password)
+                    if confirm_password:
+                        render_password_match_indicator(new_password, confirm_password)
+
+                    if st.form_submit_button("Reset Password"):
+                        if not user:
+                            st.error("Username not found.")
+                        elif not verify_security_answer(user.get("security_answer", ""), security_answer):
+                            st.error("Incorrect security answer.")
+                        else:
+                            is_strong, _ = validate_password_strength(new_password)
+                            if not is_strong:
+                                st.error("New password does not meet security requirements.")
+                            elif new_password != confirm_password:
+                                st.error("Passwords do not match.")
+                            elif update_user_password(username, new_password):
+                                st.success("Password reset successfully! Please log in with your new password.")
+                                st.session_state["auth_nav"] = "Login"
+                                st.rerun()
+                            else:
+                                st.error("Failed to update password. Please try again.")
+                elif user and not user.get("security_question"):
+                    st.warning("This account does not have a security question set up. Please use Email Reset or contact your Director.")
+                elif username:
+                    st.error("Username not found.")
+                else:
+                    st.info("Enter your username to see your security question.")
+
+        elif recovery_method == "Email Reset Code":
+            with st.form("email_reset"):
+                username = st.text_input("Username")
+                email = st.text_input("Registered Email Address")
+
+                if st.form_submit_button("Send Reset Code"):
+                    user = get_user_by_username(username) if username else None
+                    if not user:
+                        st.error("Username not found.")
+                    elif user.get("email", "").lower() != email.lower().strip():
+                        st.error("Email does not match the registered email for this account.")
+                    else:
+                        reset_token = generate_reset_token()
+                        success, message = send_password_reset_email(user["email"], reset_token, username)
+                        if success:
+                            st.session_state["password_reset_token"] = reset_token
+                            st.session_state["password_reset_user"] = username
+                            st.success(f"Reset code sent to {user['email']}. Check your inbox and enter the code below.")
+                        else:
+                            st.error(message)
+
+            # Token verification section
+            if st.session_state.get("password_reset_token"):
+                st.markdown("---")
+                with st.form("verify_reset_token"):
+                    entered_token = st.text_input("Enter Reset Code from Email")
+                    new_password = st.text_input("New Password", type="password", key="email_new_password")
+                    confirm_password = st.text_input("Confirm New Password", type="password", key="email_confirm_password")
+
+                    if new_password:
+                        render_password_strength_indicator(new_password)
+                    if confirm_password:
+                        render_password_match_indicator(new_password, confirm_password)
+
+                    if st.form_submit_button("Reset Password"):
+                        if entered_token != st.session_state.get("password_reset_token"):
+                            st.error("Invalid reset code.")
+                        else:
+                            is_strong, _ = validate_password_strength(new_password)
+                            if not is_strong:
+                                st.error("New password does not meet security requirements.")
+                            elif new_password != confirm_password:
+                                st.error("Passwords do not match.")
+                            else:
+                                username = st.session_state.get("password_reset_user")
+                                if update_user_password(username, new_password):
+                                    st.success("Password reset successfully! Please log in with your new password.")
+                                    st.session_state["password_reset_token"] = None
+                                    st.session_state["password_reset_user"] = None
+                                    st.session_state["auth_nav"] = "Login"
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to update password.")
+
+        elif recovery_method == "Owner Override (Admin)":
+            with st.form("owner_override_reset"):
+                owner_secret = st.text_input("Owner Secret Key", type="password")
+                username = st.text_input("Username to Reset")
+                new_password = st.text_input("New Password", type="password", key="owner_new_password")
+                confirm_password = st.text_input("Confirm New Password", type="password", key="owner_confirm_password")
+
+                if new_password:
+                    render_password_strength_indicator(new_password)
+                if confirm_password:
+                    render_password_match_indicator(new_password, confirm_password)
+
+                if st.form_submit_button("Reset Password"):
+                    if not verify_owner_secret(owner_secret):
+                        st.error("Invalid owner secret key.")
+                    else:
+                        user = get_user_by_username(username)
+                        if not user:
+                            st.error("Username not found.")
+                        else:
+                            is_strong, _ = validate_password_strength(new_password)
+                            if not is_strong:
+                                st.error("New password does not meet security requirements.")
+                            elif new_password != confirm_password:
+                                st.error("Passwords do not match.")
+                            elif update_user_password(username, new_password):
+                                st.success(f"Password for {username} has been reset successfully!")
+                                st.session_state["auth_nav"] = "Login"
+                                st.rerun()
+                            else:
+                                st.error("Failed to update password.")
+
     elif choice == "Register Director":
         st.title("📋 Director Registration")
         st.write(
@@ -2365,8 +2606,14 @@ def login_ui():
             director_access_code = st.text_input("BloomCore Director Access Code", type="password")
             district_name = st.text_input("District/Municipal Name")
             username = st.text_input("Director Username")
+            email = st.text_input("Email Address (for password recovery)")
             password = st.text_input("Password", type="password", key="dir_reg_password")
             confirm_password = st.text_input("Confirm Password", type="password", key="dir_reg_confirm_password")
+
+            st.markdown("---")
+            st.write("🔐 **Security Question (for password recovery)**")
+            security_question = st.selectbox("Select a security question", SECURITY_QUESTION_OPTIONS)
+            security_answer = st.text_input("Your Answer (remember this for password recovery)", type="password")
 
             # Real-time password indicators (displayed inside form but update on each interaction)
             password = st.session_state.get("dir_reg_password", "")
@@ -2385,6 +2632,8 @@ def login_ui():
                     st.error("Password does not meet security requirements. Please check the requirements above and try again.")
                 elif password != confirm_password:
                     st.error("Passwords do not match.")
+                elif not security_answer.strip():
+                    st.error("Security answer is required for password recovery.")
                 else:
                     security_key = generate_security_key(district_name)
                     try:
@@ -2395,6 +2644,9 @@ def login_ui():
                             "ALL",
                             district=district_name,
                             security_key=security_key,
+                            email=email,
+                            security_question=security_question,
+                            security_answer=security_answer,
                         )
                         consume_director_registration_key()
                         activate_director_context(result["username"], result["district"], result["security_key"])
@@ -2433,9 +2685,15 @@ def login_ui():
 
             with st.form("registration_form"):
                 username = st.text_input("New Username")
+                email = st.text_input("Email Address (for password recovery)")
                 password = st.text_input("New Password", type="password", key="ht_reg_password")
                 confirm_password = st.text_input("Confirm Password", type="password", key="ht_reg_confirm_password")
                 school = st.selectbox("Select Your School", school_options)
+
+                st.markdown("---")
+                st.write("🔐 **Security Question (for password recovery)**")
+                security_question = st.selectbox("Select a security question", SECURITY_QUESTION_OPTIONS, key="ht_security_q")
+                security_answer = st.text_input("Your Answer (remember this for password recovery)", type="password", key="ht_security_a")
 
                 # Real-time password indicators
                 password = st.session_state.get("ht_reg_password", "")
@@ -2452,6 +2710,8 @@ def login_ui():
                         st.error("Password does not meet security requirements. Please check the requirements above and try again.")
                     elif password != confirm_password:
                         st.error("Passwords do not match.")
+                    elif not security_answer.strip():
+                        st.error("Security answer is required for password recovery.")
                     else:
                         try:
                             result = register_user(
@@ -2460,6 +2720,9 @@ def login_ui():
                                 "Headteacher",
                                 school,
                                 district=active_scope_label,
+                                email=email,
+                                security_question=security_question,
+                                security_answer=security_answer,
                             )
                             st.session_state["latest_registered_school"] = result["school"]
                             st.session_state["latest_registered_district"] = active_scope_label
