@@ -5285,7 +5285,10 @@ def render_school_dashboard(school_df, subject_cols):
         subject_summary = pd.DataFrame(
             {
                 "Subject": [format_subject_name(subject) for subject in subject_cols],
-                "Average Score": [safe_float(school_df[subject].mean(), 0.0) for subject in subject_cols],
+                "Average Score": [
+                    safe_float(pd.to_numeric(school_df[subject], errors="coerce").mean(), 0.0)
+                    for subject in subject_cols
+                ],
             }
         ).sort_values("Average Score", ascending=True)
 
