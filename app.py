@@ -1294,6 +1294,9 @@ def validate_circuit_columns(columns):
 def build_template_csv_bytes(columns):
     output = io.StringIO()
     writer = csv.writer(output)
+    # Add warning comment at top - users should NOT modify column headers
+    writer.writerow(["# WARNING: DO NOT EDIT OR DELETE THESE COLUMN HEADERS - ONLY FILL IN DATA ROWS BELOW"])
+    writer.writerow(["#"])
     writer.writerow(columns)
     for _ in range(3):
         row = [""] * len(columns)
@@ -1413,6 +1416,9 @@ def assign_missing_school_student_ids(student_df, school, existing_school_df=Non
 def build_headteacher_student_template_bytes(school, circuit="", school_type=""):
     output = io.StringIO()
     writer = csv.writer(output)
+    # Add warning comment at top - users should NOT modify column headers
+    writer.writerow(["# WARNING: DO NOT EDIT OR DELETE THESE COLUMN HEADERS - ONLY FILL IN DATA ROWS BELOW"])
+    writer.writerow(["#"])
     writer.writerow(PREDICTION_TEMPLATE_COLUMNS)
 
     student_id_index = PREDICTION_TEMPLATE_COLUMNS.index("Student_ID")
@@ -2400,7 +2406,8 @@ def render_metric_card(label, value, delta=None, delta_color="normal", help_text
 # ============================================================
 def read_uploaded_csv(uploaded_file, dtype=None):
     uploaded_bytes = uploaded_file.getvalue()
-    uploaded_df = pd.read_csv(io.BytesIO(uploaded_bytes), dtype=dtype)
+    # Skip comment lines (starting with #) that contain protection warnings
+    uploaded_df = pd.read_csv(io.BytesIO(uploaded_bytes), dtype=dtype, comment='#')
     uploaded_df = clean_uploaded_dataframe(uploaded_df)
     return uploaded_bytes, uploaded_df
 
@@ -3338,7 +3345,7 @@ def render_circuit_setup(title, description, key_prefix, redirect_to_login=False
 
 
 def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
-    st.markdown("### ???? Headteacher Student Data Workspace")
+    st.markdown("### 📚 Headteacher Student Data Workspace")
     school = str(school).strip()
     school_profile = load_school_profile_lookup().get(school, {})
     school_circuit = school_profile.get("Circuit", "")
@@ -3352,7 +3359,7 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
     st.markdown(
         """
         <div class="mobile-sync-card">
-            <div class="mobile-sync-title">???? Mobile Quick Sync</div>
+            <div class="mobile-sync-title">📱 Mobile Quick Sync</div>
             <p class="mobile-sync-copy">
                 On phones, use the prediction template when you want a guided entry sheet, or upload the standard WAEC PDF once the school receives the official BECE release.
             </p>
@@ -3365,7 +3372,7 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
         st.write("Example: if a student attended 142 out of 150 school days, attendance is 94.7%.")
         st.write("If you do not have the attendance figure ready, leave the field blank and EduPulse will fill it during sync.")
 
-    template_tab, official_tab = st.tabs(["???? Prediction Template Sync", "??????? Official WAEC Result Import"])
+    template_tab, official_tab = st.tabs(["📊 Prediction Template Sync", "📄 Official WAEC Result Import"])
 
     with template_tab:
         left_col, right_col = st.columns([1, 1])
@@ -3564,7 +3571,7 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
 
 
 def render_director_official_results_intake(key_prefix):
-    st.markdown("### ??????? Official WAEC Results Intake")
+    st.markdown("### 📑 Official WAEC Results Intake")
     st.write("Directors can replace school rows from the standard WAEC BECE result PDFs either one school at a time or in a multi-school bulk upload.")
     with st.expander("Accepted official result fields"):
         st.dataframe(
@@ -4313,7 +4320,11 @@ def render_communication_center(df, subject_cols, key_prefix):
         target_contact_df = district_contacts_df[
             district_contacts_df["school"].fillna("").astype(str).str.strip().isin(target_schools)
         ].copy() if target_schools else pd.DataFrame()
-        target_contact_df["whatsapp_number_clean"] = target_contact_df["whatsapp_number"].fillna("").astype(str).str.strip()
+        # Guard against empty DataFrame or missing whatsapp_number column
+        if target_contact_df.empty or "whatsapp_number" not in target_contact_df.columns:
+            target_contact_df = pd.DataFrame(columns=["school", "contact_name", "whatsapp_number_clean"])
+        else:
+            target_contact_df["whatsapp_number_clean"] = target_contact_df["whatsapp_number"].fillna("").astype(str).str.strip()
         target_contact_df = target_contact_df[target_contact_df["whatsapp_number_clean"] != ""]
         target_contact_df = target_contact_df.drop_duplicates(subset=["school"], keep="last")
         resolved_rows = target_contact_df[["school", "contact_name", "whatsapp_number_clean"]].rename(
@@ -5094,7 +5105,7 @@ def manual_entry_form(df, subject_cols, school):
 
 
 def render_manual_grade_predictor(school):
-    with st.expander("???? Manual BECE Grade Entry (Placement Predictor)"):
+    with st.expander("✏️ Manual BECE Grade Entry (Placement Predictor)"):
         st.write("Enter the four core grades and the two best elective grades to forecast CSSPS placement.")
         st.caption("When you save a manual prediction here, the Director dashboard will receive it and rank schools and circuits by their latest Category A, B, and C predictions.")
 
