@@ -3735,9 +3735,14 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
                             prepared_df["School_Name"] = school
                             prepared_df["Circuit"] = school_circuit
                             prepared_df["School_Type"] = school_type
-                            missing_name_rows = int(prepared_df["Student_Name"].fillna("").astype(str).str.strip().eq("").sum())
-                            if missing_name_rows > 0:
-                                st.error(f"Every uploaded student row must include Student_Name. {missing_name_rows} row(s) are missing Student_Name.")
+
+                            # Automatically filter out all 'ghost rows' (empty student names)
+                            # We only keep rows where a Student_Name was actually typed in
+                            prepared_df = prepared_df[prepared_df["Student_Name"].fillna("").astype(str).str.strip() != ""]
+
+                            # Check if there is any actual data left after filtering
+                            if prepared_df.empty:
+                                st.error("No valid student names were found in the uploaded file. Please ensure you typed the names correctly.")
                             else:
                                 data_status = get_data_file_status()
                                 if data_status["ready"]:
