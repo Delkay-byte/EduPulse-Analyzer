@@ -2458,12 +2458,26 @@ def login_ui():
         )
 
         if recovery_method == "Security Question":
-            with st.form("security_question_reset"):
-                username = st.text_input("Username")
-                user = get_user_by_username(username) if username else None
-
-                if user and user.get("security_question"):
-                    st.info(f"Security Question: {user['security_question']}")
+            # Step 1: Username lookup form
+            if not st.session_state.get("reset_username_verified"):
+                with st.form("security_question_lookup"):
+                    username = st.text_input("Username")
+                    if st.form_submit_button("Lookup Account"):
+                        user = get_user_by_username(username) if username else None
+                        if not user:
+                            st.error("Username not found.")
+                        elif not user.get("security_question"):
+                            st.warning("This account does not have a security question set up. Please use Email Reset or contact your Director.")
+                        else:
+                            st.session_state["reset_username"] = username
+                            st.session_state["reset_security_question"] = user["security_question"]
+                            st.session_state["reset_security_answer_hash"] = user.get("security_answer", "")
+                            st.session_state["reset_username_verified"] = True
+                            st.rerun()
+            else:
+                # Step 2: Password reset form with security question
+                st.info(f"Security Question: {st.session_state.get('reset_security_question', '')}")
+                with st.form("security_question_reset"):
                     security_answer = st.text_input("Your Answer", type="password")
                     new_password = st.text_input("New Password", type="password", key="sq_new_password")
                     confirm_password = st.text_input("Confirm New Password", type="password", key="sq_confirm_password")
@@ -2473,29 +2487,38 @@ def login_ui():
                     if confirm_password:
                         render_password_match_indicator(new_password, confirm_password)
 
-                    if st.form_submit_button("Reset Password"):
-                        if not user:
-                            st.error("Username not found.")
-                        elif not verify_security_answer(user.get("security_answer", ""), security_answer):
-                            st.error("Incorrect security answer.")
-                        else:
-                            is_strong, _ = validate_password_strength(new_password)
-                            if not is_strong:
-                                st.error("New password does not meet security requirements.")
-                            elif new_password != confirm_password:
-                                st.error("Passwords do not match.")
-                            elif update_user_password(username, new_password):
-                                st.success("Password reset successfully! Please log in with your new password.")
-                                st.session_state["auth_nav"] = "Login"
-                                st.rerun()
+                    col1, col2 = st.columns([1, 1])
+                    with col1:
+                        if st.form_submit_button("Reset Password"):
+                            username = st.session_state.get("reset_username", "")
+                            stored_answer_hash = st.session_state.get("reset_security_answer_hash", "")
+
+                            if not verify_security_answer(stored_answer_hash, security_answer):
+                                st.error("Incorrect security answer.")
                             else:
-                                st.error("Failed to update password. Please try again.")
-                elif user and not user.get("security_question"):
-                    st.warning("This account does not have a security question set up. Please use Email Reset or contact your Director.")
-                elif username:
-                    st.error("Username not found.")
-                else:
-                    st.info("Enter your username to see your security question.")
+                                is_strong, _ = validate_password_strength(new_password)
+                                if not is_strong:
+                                    st.error("New password does not meet security requirements.")
+                                elif new_password != confirm_password:
+                                    st.error("Passwords do not match.")
+                                elif update_user_password(username, new_password):
+                                    st.success("Password reset successfully! Please log in with your new password.")
+                                    # Clear session state
+                                    st.session_state["reset_username"] = None
+                                    st.session_state["reset_security_question"] = None
+                                    st.session_state["reset_security_answer_hash"] = None
+                                    st.session_state["reset_username_verified"] = False
+                                    st.session_state["auth_nav"] = "Login"
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to update password. Please try again.")
+                    with col2:
+                        if st.form_submit_button("Cancel"):
+                            st.session_state["reset_username"] = None
+                            st.session_state["reset_security_question"] = None
+                            st.session_state["reset_security_answer_hash"] = None
+                            st.session_state["reset_username_verified"] = False
+                            st.rerun()
 
         elif recovery_method == "Email Reset Code":
             with st.form("email_reset"):
