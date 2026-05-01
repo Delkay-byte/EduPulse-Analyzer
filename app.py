@@ -3372,14 +3372,13 @@ def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
 
     extracted_rows = []
     current_record = None
-    pending_name_parts = []
-    pending_result_parts = []
 
     def finalize_record(record):
         if not record:
             return None
         student_name = " ".join(part for part in record.get("name_parts", []) if part).strip()
         student_name = re.sub(r"\s+", " ", student_name).strip()
+        student_name = clean_waec_name_fragment(student_name)  # Final cleanup
         results_text = " ".join(part for part in record.get("results_parts", []) if part).strip()
         results_text = re.sub(r"\s+", " ", results_text).strip(" ,")
         return {
@@ -3390,44 +3389,54 @@ def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
             "Official_Results_Raw": results_text,
         }
 
+    def extract_index_number(text):
+        """Extract 10-digit index number from text."""
+        if not text:
+            return None
+        match = re.search(r"\b(\d{10})\b", str(text))
+        return match.group(1) if match else None
+
     for line_index, line_fields in enumerate(table_lines):
-        next_index_text = table_lines[line_index + 1]["index"] if line_index + 1 < len(table_lines) else ""
-        line_index_number = re.search(r"\b(\d{10})\b", line_fields.get("index", "") or line_fields.get("full_text", ""))
+        # Check if this line starts a NEW candidate (has 10-digit index number)
+        index_from_index_col = extract_index_number(line_fields.get("index", ""))
+        index_from_full_text = extract_index_number(line_fields.get("full_text", ""))
+        line_index_number = index_from_index_col or index_from_full_text
+
+        # Extract other fields
         line_name = clean_waec_name_fragment(line_fields.get("name", ""))
         line_gender = normalize_gender_token(line_fields.get("gender", "") or line_fields.get("full_text", ""))
         line_dob = normalize_date_of_birth(line_fields.get("dob", "") or line_fields.get("full_text", ""))
         line_results = clean_waec_results_fragment(line_fields.get("results", ""))
 
         if line_index_number:
+            # This line has an index number = NEW CANDIDATE
+            # First, finalize and save the previous candidate if exists
             if current_record is not None:
                 finalized = finalize_record(current_record)
                 if finalized and finalized["Student_ID"]:
                     extracted_rows.append(finalized)
+
+            # Start a fresh candidate record
             current_record = {
-                "Student_ID": line_index_number.group(1),
-                "name_parts": pending_name_parts.copy(),
+                "Student_ID": line_index_number,
+                "name_parts": [],
                 "Gender": line_gender,
                 "Date_of_Birth": line_dob,
-                "results_parts": pending_result_parts.copy() + ([line_results] if line_results else []),
+                "results_parts": [],
             }
-            pending_name_parts = []
-            pending_result_parts = []
+            # Add name and results from this first line
             if line_name:
                 current_record["name_parts"].append(line_name)
-            continue
-
-        if current_record is None:
-            if line_name:
-                pending_name_parts.append(line_name)
             if line_results:
-                pending_result_parts.append(line_results)
+                current_record["results_parts"].append(line_results)
             continue
 
-        if line_name and not line_results and not line_gender and not line_dob:
-            if pending_result_parts or re.search(r"\b\d{10}\b", next_index_text or ""):
-                pending_name_parts.append(line_name)
-                continue
+        # No index number on this line = OVERFLOW content for current candidate
+        if current_record is None:
+            # No active candidate yet, skip orphan content
+            continue
 
+        # Append overflow content to current candidate
         if line_name:
             current_record["name_parts"].append(line_name)
         if line_gender and not current_record.get("Gender"):
@@ -3435,14 +3444,9 @@ def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
         if line_dob and not current_record.get("Date_of_Birth"):
             current_record["Date_of_Birth"] = line_dob
         if line_results:
-            is_new_block = bool(re.search(r"\bENGLISH\b", line_results.upper()))
-            if is_new_block and current_record.get("results_parts"):
-                pending_result_parts = [line_results]
-            elif pending_result_parts:
-                pending_result_parts.append(line_results)
-            else:
-                current_record["results_parts"].append(line_results)
+            current_record["results_parts"].append(line_results)
 
+    # Don't forget the last candidate!
     if current_record is not None:
         finalized = finalize_record(current_record)
         if finalized and finalized["Student_ID"]:
