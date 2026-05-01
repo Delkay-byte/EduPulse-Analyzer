@@ -892,7 +892,10 @@ def write_table_df(table_key, df, columns):
             except Exception:
                 worksheet = sheet.add_worksheet(title=worksheet_name, rows=max(1000, len(safe_df) + 5), cols=max(26, len(columns) + 2))
             worksheet.clear()
-            payload = [columns] + safe_df.astype(str).values.tolist()
+            # Explicitly convert each cell to string to handle mixed types
+            payload = [columns]
+            for row in safe_df.values.tolist():
+                payload.append([str(cell) if cell is not None else "" for cell in row])
             worksheet.update("A1", payload)
             return
         except Exception:
