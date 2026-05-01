@@ -3388,84 +3388,148 @@ def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         school_name = extract_waec_school_name(pdf) or Path(fallback_school_name).stem.replace("_", " ").strip()
         
-        # Line-by-line extraction to properly handle split names and page breaks
-        extracted_data = []
-        index_pattern = re.compile(r'^\d{10}$')
-        current_student = None
+        # Try table-based extraction with text strategy first
+        all_students = []
         
         for page in pdf.pages:
-            text = page.extract_text()
-            if not text:
-                continue
+            # Use table extraction with text strategy for better name capture
+            table = page.extract_table({
+                "vertical_strategy": "text",
+                "horizontal_strategy": "lines",
+                "intersection_y_tolerance": 10,
+                "snap_tolerance": 3,
+            })
             
-            lines = text.split('\n')
+            if table:
+                for row in table:
+                    # Filter out header rows and empty rows
+                    if not row or len(row) < 2:
+                        continue
+                    
+                    first_cell = str(row[0]).strip().upper() if row[0] else ""
+                    if "INDEX" in first_cell or not first_cell:
+                        continue
+                    
+                    # Check if first cell contains index number
+                    index_match = re.search(r'\b(07\d{8})\b', first_cell)
+                    if index_match:
+                        index_number = index_match.group(1)
+                        
+                        # Combine name cells - names may be split across columns
+                        name_parts = []
+                        for i in range(1, min(4, len(row))):
+                            cell_text = str(row[i]).strip() if row[i] else ""
+                            # Skip if it looks like gender or DOB
+                            if cell_text.upper() in ["MALE", "FEMALE", "M", "F"]:
+                                break
+                            if re.match(r'\d{2}/\d{2}/\d{4}', cell_text):
+                                break
+                            if cell_text and cell_text.upper() not in ["NAN", "NONE", "NULL"]:
+                                name_parts.append(cell_text)
+                        
+                        full_name = " ".join(name_parts).strip()
+                        
+                        # Find gender, DOB, and results in remaining cells
+                        gender = ""
+                        dob = ""
+                        results = ""
+                        
+                        for cell in row[1:]:
+                            cell_text = str(cell).strip() if cell else ""
+                            if not cell_text:
+                                continue
+                            
+                            if cell_text.upper() in ["MALE", "FEMALE", "M", "F"]:
+                                gender = cell_text
+                            elif re.match(r'\d{2}/\d{2}/\d{4}', cell_text):
+                                dob = cell_text
+                            elif "-" in cell_text and any(char.isdigit() for char in cell_text):
+                                results = cell_text
+                        
+                        all_students.append({
+                            "Student_ID": index_number,
+                            "Student_Name": full_name,
+                            "Gender": normalize_gender_token(gender),
+                            "Date_of_Birth": normalize_date_of_birth(dob),
+                            "Official_Results_Raw": results,
+                        })
+        
+        # If table extraction found students, use those
+        if all_students:
+            return school_name, all_students
+        
+        # Fallback to line-by-line extraction
+        return _extract_waec_pdf_line_by_line(pdf, school_name)
+
+
+def _extract_waec_pdf_line_by_line(pdf, school_name):
+    """Line-by-line extraction when table extraction fails."""
+    extracted_data = []
+    index_pattern = re.compile(r'^\d{10}$')
+    current_student = None
+    
+    for page in pdf.pages:
+        text = page.extract_text()
+        if not text:
+            continue
+        
+        lines = text.split('\n')
+        
+        for line in lines:
+            clean_line = line.strip()
             
-            for line in lines:
-                clean_line = line.strip()
+            # Check if this line is an Index Number (10 digits)
+            if index_pattern.match(clean_line):
+                if current_student:
+                    extracted_data.append(current_student)
                 
-                # Check if this line is an Index Number (10 digits)
-                if index_pattern.match(clean_line):
-                    # Save previous student before starting new one
-                    if current_student:
-                        extracted_data.append(current_student)
-                    
-                    # Initialize new student
-                    current_student = {
-                        "Student_ID": clean_line,
-                        "Student_Name": "",
-                        "Gender": "",
-                        "Date_of_Birth": "",
-                        "Official_Results_Raw": "",
-                    }
+                current_student = {
+                    "Student_ID": clean_line,
+                    "Student_Name": "",
+                    "Gender": "",
+                    "Date_of_Birth": "",
+                    "Official_Results_Raw": "",
+                }
+            
+            elif current_student:
+                # Skip header noise
+                skip_words = ["INDEX NUMBER", "NAME", "GENDER", "DOB", "RESULTS", 
+                              "WAEC", "TOTAL", "CANDIDATES", "HTTPS://", "4/25/25", "PM", "AM"]
+                if any(word in clean_line.upper() for word in skip_words):
+                    continue
                 
-                # If inside a student record, capture name and results
-                elif current_student:
-                    # Skip header noise
-                    skip_words = ["INDEX NUMBER", "NAME", "GENDER", "DOB", "RESULTS", 
-                                  "WAEC", "TOTAL", "CANDIDATES", "HTTPS://", "4/25/25", "PM", "AM"]
-                    if any(word in clean_line.upper() for word in skip_words):
-                        continue
-                    
-                    # Check for gender
-                    if clean_line.upper() in ["MALE", "FEMALE"]:
-                        current_student["Gender"] = clean_line
-                        continue
-                    
-                    # Check for DOB (dd/mm/yyyy format)
-                    dob_match = re.match(r'(\d{2}/\d{2}/\d{4})$', clean_line)
-                    if dob_match:
-                        current_student["Date_of_Birth"] = dob_match.group(1)
-                        continue
-                    
-                    # If line has letters (not just grades), it's part of the name
-                    # Names like 'GAKPO GODSWAY' may be split across lines
-                    if any(char.isalpha() for char in clean_line):
-                        # Skip if it looks like a subject line (contains grade pattern)
-                        if re.search(r'[A-Z]+\s*-\s*\d', clean_line):
-                            current_student["Official_Results_Raw"] += " " + clean_line
-                        else:
-                            # It's a name part
-                            current_student["Student_Name"] += " " + clean_line
-                    else:
-                        # Treat as results
+                if clean_line.upper() in ["MALE", "FEMALE"]:
+                    current_student["Gender"] = clean_line
+                    continue
+                
+                dob_match = re.match(r'(\d{2}/\d{2}/\d{4})$', clean_line)
+                if dob_match:
+                    current_student["Date_of_Birth"] = dob_match.group(1)
+                    continue
+                
+                if any(char.isalpha() for char in clean_line):
+                    if re.search(r'[A-Z]+\s*-\s*\d', clean_line):
                         current_student["Official_Results_Raw"] += " " + clean_line
-        
-        # Don't forget the last student
-        if current_student:
-            extracted_data.append(current_student)
-        
-        # Clean up the data
-        for student in extracted_data:
-            student["Student_Name"] = re.sub(r'\s+', ' ', student["Student_Name"]).strip()
-            student["Official_Results_Raw"] = re.sub(r'\s+', ' ', student["Official_Results_Raw"]).strip()
-            student["Gender"] = normalize_gender_token(student["Gender"])
-            student["Date_of_Birth"] = normalize_date_of_birth(student["Date_of_Birth"])
-        
-        if extracted_data:
-            return school_name, extracted_data
-        
-        # Fallback to regex-based extraction if line-by-line fails
-        return _extract_waec_pdf_text_based(pdf, school_name)
+                    else:
+                        current_student["Student_Name"] += " " + clean_line
+                else:
+                    current_student["Official_Results_Raw"] += " " + clean_line
+    
+    if current_student:
+        extracted_data.append(current_student)
+    
+    # Clean up
+    for student in extracted_data:
+        student["Student_Name"] = re.sub(r'\s+', ' ', student["Student_Name"]).strip()
+        student["Official_Results_Raw"] = re.sub(r'\s+', ' ', student["Official_Results_Raw"]).strip()
+        student["Gender"] = normalize_gender_token(student["Gender"])
+        student["Date_of_Birth"] = normalize_date_of_birth(student["Date_of_Birth"])
+    
+    if extracted_data:
+        return school_name, extracted_data
+    
+    # Final fallback to regex-based
+    return _extract_waec_pdf_text_based(pdf, school_name)
 
 
 def _extract_waec_pdf_text_based(pdf, school_name):
