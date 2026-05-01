@@ -5964,7 +5964,7 @@ def render_school_dashboard(school_df, subject_cols):
 def manual_entry_form(df, subject_cols, school):
     st.markdown("### ➕ Add Single Student")
     st.info("Use this update form to add one new student after the initial school CSV upload. The record syncs immediately to the Director dashboard under the same school and mapped circuit.")
-    st.caption("Attendance is no longer entered here because it does not appear on the official WAEC result file. EduPulse will still keep an attendance baseline in the background for forecasting use.")
+    st.caption("Enter continuous assessment scores (0-100) for each subject. EduPulse will forecast BECE grades from these assessments.")
 
     if not subject_cols:
         st.warning("No BECE subject columns were found, so results cannot be entered yet.")
@@ -5972,8 +5972,6 @@ def manual_entry_form(df, subject_cols, school):
         return
 
     csv_columns = [column for column in df.columns if column != "Search_Label"]
-    core_subjects = [subject for subject in subject_cols if is_core_subject(subject)]
-    elective_subjects = [subject for subject in subject_cols if subject not in core_subjects]
     suggested_student_id = f"{build_school_student_id_prefix(school)}-{get_next_school_student_id_number(school, build_school_student_id_prefix(school)):04d}"
     school_profile = load_school_profile_lookup().get(school, {})
     suggested_attendance = resolve_attendance_default_value(
@@ -5986,31 +5984,89 @@ def manual_entry_form(df, subject_cols, school):
         student_id = st.text_input("Student ID", value=suggested_student_id, help="A school-specific ID is suggested automatically. You can edit it if needed.")
         gender = st.selectbox("Gender", ["Not specified", "F", "M"])
         date_of_birth = st.text_input("Date of Birth (optional)", placeholder="Example: 21/10/2008")
+        attendance_percent = st.number_input(
+            "Attendance Percent (optional)",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(suggested_attendance),
+            step=0.1,
+            help="Leave blank to use school average, or enter the student's attendance percentage."
+        )
 
-        st.markdown("#### Core Subjects")
-        grade_inputs = {}
-        core_columns = st.columns(2)
-        for index, subject in enumerate(core_subjects):
-            with core_columns[index % 2]:
-                grade_inputs[subject] = st.number_input(
-                    f"{format_subject_name(subject)} Grade (1-9)",
-                    min_value=1,
-                    max_value=9,
-                    value=5,
-                    key=f"entry_{subject}",
-                )
+        st.markdown("---")
+        st.subheader("📝 Continuous Assessment Records")
+        st.info("Enter raw scores (0-100) for each assessment period. These are the same fields as in your CSV template.")
 
-        st.markdown("#### Electives")
-        elective_columns = st.columns(3)
-        for index, subject in enumerate(elective_subjects):
-            with elective_columns[index % 3]:
-                grade_inputs[subject] = st.number_input(
-                    f"{format_subject_name(subject)} Grade (1-9)",
-                    min_value=1,
-                    max_value=9,
-                    value=5,
-                    key=f"entry_{subject}",
-                )
+        # Build subject prefixes from subject_cols (which are Final_BECE columns)
+        subject_prefixes = []
+        for subject in subject_cols:
+            prefix = subject.replace(FINAL_SUFFIX, "")
+            if prefix and prefix not in subject_prefixes:
+                subject_prefixes.append(prefix)
+
+        # Create display names for tabs
+        display_names = {p: p.replace("_", " ").title() for p in subject_prefixes}
+        display_names.update({
+            "Mathematics": "Mathematics",
+            "English_Language": "English Language",
+            "Integrated_Science": "Integrated Science",
+            "Social_Studies": "Social Studies",
+            "ICT": "ICT",
+            "RME": "R.M.E.",
+            "BDT": "BDT (Pre-Tech)",
+            "French": "French",
+            "Ewe": "Ewe",
+        })
+
+        # Create tabs for each subject
+        subject_tabs = st.tabs([display_names.get(p, p.replace("_", " ").title()) for p in subject_prefixes])
+
+        # Dict to store all assessment inputs
+        assessment_data = {}
+
+        for i, prefix in enumerate(subject_prefixes):
+            with subject_tabs[i]:
+                st.markdown(f"**{display_names.get(prefix, prefix.replace('_', ' ').title())} Assessment Scores**")
+
+                # Create 5 columns for the assessment fields
+                col1, col2, col3, col4, col5 = st.columns(5)
+
+                with col1:
+                    val_assign = st.number_input(
+                        "Assignments", 0, 100, 0,
+                        key=f"{prefix}_ass_{school.replace(' ', '_')}"
+                    )
+                    assessment_data[f"{prefix}_Assignments"] = val_assign
+
+                with col2:
+                    val_t1 = st.number_input(
+                        "Term 1 Exam", 0, 100, 0,
+                        key=f"{prefix}_t1_{school.replace(' ', '_')}"
+                    )
+                    assessment_data[f"{prefix}_Term1_Exam"] = val_t1
+
+                with col3:
+                    val_t2 = st.number_input(
+                        "Term 2 Exam", 0, 100, 0,
+                        key=f"{prefix}_t2_{school.replace(' ', '_')}"
+                    )
+                    assessment_data[f"{prefix}_Term2_Exam"] = val_t2
+
+                with col4:
+                    val_m1 = st.number_input(
+                        "Mock 1", 0, 100, 0,
+                        key=f"{prefix}_m1_{school.replace(' ', '_')}"
+                    )
+                    assessment_data[f"{prefix}_Mock1"] = val_m1
+
+                with col5:
+                    val_m2 = st.number_input(
+                        "Mock 2", 0, 100, 0,
+                        key=f"{prefix}_m2_{school.replace(' ', '_')}"
+                    )
+                    assessment_data[f"{prefix}_Mock2"] = val_m2
+
+        st.markdown("---")
 
         if st.form_submit_button("Upload to District/Municipal Records", type="primary"):
             final_student_id = student_id.strip() or suggested_student_id
@@ -6030,23 +6086,28 @@ def manual_entry_form(df, subject_cols, school):
             record["Date_of_Birth"] = date_of_birth.strip()
             record["Circuit"] = school_profile.get("Circuit", load_circuit_lookup().get(school, school))
             record["School_Type"] = school_profile.get("School_Type", "Not Specified")
-            record["Attendance_Percent"] = round(float(suggested_attendance), 1)
+            record["Attendance_Percent"] = round(float(attendance_percent), 1)
 
             if "Gender" in record:
                 record["Gender"] = "" if gender == "Not specified" else gender
 
-            final_scores = []
-            for subject, grade in grade_inputs.items():
-                score = grade_to_score(grade)
-                final_scores.append(score)
-                if subject in record:
-                    record[subject] = score
+            # Store all continuous assessment scores
+            for column_name, score in assessment_data.items():
+                if column_name in record:
+                    record[column_name] = score
 
+            # Calculate provisional final scores from assessments for any visible final columns
+            final_scores = []
+            for subject in subject_cols:
                 prefix = subject.replace(FINAL_SUFFIX, "")
-                for suffix in ASSESSMENT_SUFFIXES:
-                    column_name = f"{prefix}_{suffix}"
-                    if column_name in record:
-                        record[column_name] = score
+                assessment_cols = [f"{prefix}_{s}" for s in ASSESSMENT_SUFFIXES if f"{prefix}_{s}" in record]
+                if assessment_cols:
+                    scores = [record.get(c, 0) for c in assessment_cols if pd.notna(record.get(c, 0))]
+                    if scores:
+                        avg_score = sum(scores) / len(scores)
+                        final_scores.append(avg_score)
+                        if subject in record:
+                            record[subject] = avg_score
 
             if "Math_Improvement" in record:
                 record["Math_Improvement"] = 0
