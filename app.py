@@ -184,19 +184,36 @@ MODEL_KEY_OVERRIDES = {
 WAEC_RESULT_SUBJECT_MAP = {
     "ENGLISH LANGUAGE": "English_Language_Final_BECE",
     "ENGLISH LANG": "English_Language_Final_BECE",
+    "ENGLISH": "English_Language_Final_BECE",
     "MATHEMATICS": "Mathematics_Final_BECE",
+    "MATHS": "Mathematics_Final_BECE",
+    "MATH": "Mathematics_Final_BECE",
     "SCIENCE": "Integrated_Science_Final_BECE",
+    "INTEGRATED SCIENCE": "Integrated_Science_Final_BECE",
     "SOCIAL STUDIES": "Social_Studies_Final_BECE",
     "SOCIAL STUD": "Social_Studies_Final_BECE",
+    "SOCIAL": "Social_Studies_Final_BECE",
     "RME": "RME_Final_BECE",
     "R.M.E": "RME_Final_BECE",
+    "REL. & MORAL EDUC.": "RME_Final_BECE",
+    "RELIGIOUS AND MORAL EDUCATION": "RME_Final_BECE",
     "EWE": "Ewe_Final_BECE",
+    "EPE": "Ewe_Final_BECE",
     "CAREER TECHNOLOGY": "BDT_Final_BECE",
     "CAREER TECH": "BDT_Final_BECE",
+    "CAREER TECH.": "BDT_Final_BECE",
+    "BDT": "BDT_Final_BECE",
+    "BASIC DESIGN AND TECHNOLOGY": "BDT_Final_BECE",
     "CREATIVE ARTS DESIGN": "French_Final_BECE",
+    "CREATIVE ARTS & DES.": "French_Final_BECE",
+    "CREATIVE ARTS & DESIGN": "French_Final_BECE",
+    "C. A. & DESIGN": "French_Final_BECE",
     "CA DESIGN": "French_Final_BECE",
     "C A DESIGN": "French_Final_BECE",
+    "FRENCH": "French_Final_BECE",
     "COMPUTING": "ICT_Final_BECE",
+    "ICT": "ICT_Final_BECE",
+    "INFORMATION AND COMMUNICATION TECHNOLOGY": "ICT_Final_BECE",
 }
 SUBJECT_IMPORT_ALIASES = {
     "Student_ID": ["student id", "student_id", "index number", "index_number", "candidate number", "candidate_no", "candidate id"],
@@ -3371,26 +3388,101 @@ def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         school_name = extract_waec_school_name(pdf) or Path(fallback_school_name).stem.replace("_", " ").strip()
         
-        # Extract ALL text from PDF as one continuous string (preserve structure)
-        full_text = ""
+        # Try robust table extraction first
+        all_students = []
+        
         for page in pdf.pages:
-            page_text = page.extract_text() or ""
-            full_text += "\n" + page_text + "\n"
+            # Use table extraction with text strategy for better name capture
+            table = page.extract_table({
+                "vertical_strategy": "text",
+                "horizontal_strategy": "lines",
+                "intersection_y_tolerance": 10,
+                "snap_tolerance": 3,
+            })
+            
+            if table:
+                for row in table:
+                    # Skip header rows and empty rows
+                    if not row or len(row) < 2:
+                        continue
+                    
+                    first_cell = str(row[0]).strip().upper() if row[0] else ""
+                    if "INDEX" in first_cell or not first_cell:
+                        continue
+                    
+                    # Check if first cell contains index number
+                    index_match = re.search(r'\b(07\d{8})\b', first_cell)
+                    if index_match:
+                        index_number = index_match.group(1)
+                        
+                        # Combine name cells - names may be split across columns
+                        name_parts = []
+                        for i in range(1, min(4, len(row))):  # Check first few columns for name parts
+                            cell_text = str(row[i]).strip() if row[i] else ""
+                            # Skip if it looks like gender or DOB
+                            if cell_text.upper() in ["MALE", "FEMALE", "M", "F"]:
+                                break
+                            if re.match(r'\d{2}/\d{2}/\d{4}', cell_text):
+                                break
+                            if cell_text and cell_text.upper() not in ["NAN", "NONE", "NULL"]:
+                                name_parts.append(cell_text)
+                        
+                        full_name = " ".join(name_parts).strip()
+                        
+                        # Find gender and DOB in remaining cells
+                        gender = ""
+                        dob = ""
+                        results = ""
+                        
+                        for cell in row[1:]:
+                            cell_text = str(cell).strip() if cell else ""
+                            if not cell_text:
+                                continue
+                            
+                            # Gender detection
+                            if cell_text.upper() in ["MALE", "FEMALE", "M", "F"]:
+                                gender = cell_text
+                            # DOB detection
+                            elif re.match(r'\d{2}/\d{2}/\d{4}', cell_text):
+                                dob = cell_text
+                            # Results detection - contains grades
+                            elif "-" in cell_text and any(char.isdigit() for char in cell_text):
+                                results = cell_text
+                        
+                        all_students.append({
+                            "Student_ID": index_number,
+                            "Student_Name": full_name,
+                            "Gender": normalize_gender_token(gender),
+                            "Date_of_Birth": normalize_date_of_birth(dob),
+                            "Official_Results_Raw": results,
+                        })
+        
+        # If table extraction found students, use those
+        if all_students:
+            return school_name, all_students
+        
+        # Fallback to text-based extraction
+        return _extract_waec_pdf_text_based(pdf, school_name)
+
+
+def _extract_waec_pdf_text_based(pdf, school_name):
+    """Fallback text-based extraction when table extraction fails."""
+    full_text = ""
+    for page in pdf.pages:
+        page_text = page.extract_text() or ""
+        full_text += "\n" + page_text + "\n"
 
     if not full_text.strip():
-        raise ValueError("No readable text found in the uploaded WAEC PDF. Please ensure it is a digital WAEC result PDF.")
+        raise ValueError("No readable text found in the uploaded WAEC PDF.")
 
-    # Clean up noise patterns (page headers, footers, timestamps, URLs)
+    # Clean up noise patterns
     noise_patterns = [
         r"Total Number of Candidates:.*",
-        r"https?://resultslisting\.waecgh\.org/search.*",
         r"https?://resultslisting\.waecgh\.org.*",
         r"\d{1,2}/\d{1,2}/\d{2,4},?\s*\d{1,2}:\d{2}\s*(AM|PM).*",
         r"WAEC Results Listing",
         r"INDEX NUMBER\s+NAME\s+GENDER\s+DOB\s+RESULTS",
         r"Page \d+ of \d+",
-        r"\d{1,2}/\d{1,2}/\d{2}\s*,?\s*\d{1,2}:\d{2}\s*PM",
-        r"\d{1,2}/\d{1,2}/\d{4},?\s*\d{1,2}:\d{2}\s*(AM|PM)",
     ]
     
     clean_text = full_text
@@ -3398,7 +3490,6 @@ def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
         clean_text = re.sub(pattern, "", clean_text, flags=re.IGNORECASE)
     
     # Use regex with DOTALL to capture multi-line student blocks
-    # Pattern: Index number followed by everything until next index number or end
     student_pattern = r'(\b07\d{8}\b)(.*?)(?=\b07\d{8}\b|$)'
     matches = re.findall(student_pattern, clean_text, re.DOTALL)
     
@@ -3411,13 +3502,11 @@ def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
         if not index_number or len(index_number) != 10:
             continue
         
-        # Remove extra newlines and normalize internal whitespace
+        # Normalize whitespace
         raw_data_normalized = re.sub(r'\n+', ' ', raw_data)
         raw_data_normalized = re.sub(r'\s+', ' ', raw_data_normalized)
         
-        # Extract name, gender, DOB using Gender as the anchor
-        # Name is everything from after index to before Gender
-        # Pattern captures: Name (can include spaces/newlines) + Gender + DOB
+        # Extract name, gender, DOB
         meta_match = re.search(
             r"([A-Z][A-Z\s\.]+?)\s+(Male|Female)\s+(\d{2}/\d{2}/\d{4})",
             raw_data_normalized,
@@ -3429,23 +3518,16 @@ def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
             gender = meta_match.group(2).strip()
             dob = meta_match.group(3).strip()
             
-            # Clean up name - ensure spaces between name parts
-            # Handle cases where names might be concatenated
-            full_name = re.sub(r'\s+', ' ', full_name).strip()
-            
-            # Extract results - everything after the DOB/RESULTS keyword
+            # Extract results
             results_part = raw_data_normalized
             if "RESULTS" in raw_data_normalized.upper():
-                # Split on RESULTS and take everything after
                 results_split = re.split(r'RESULTS\s*', raw_data_normalized, flags=re.IGNORECASE)
                 if len(results_split) > 1:
                     results_part = results_split[-1]
             else:
-                # Get everything after the matched metadata
                 match_end = meta_match.end()
                 results_part = raw_data_normalized[match_end:]
             
-            # Clean up results text
             results_part = re.sub(r"\s+", " ", results_part).strip(" ,")
             
             extracted_rows.append({
@@ -3456,10 +3538,6 @@ def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
                 "Official_Results_Raw": results_part,
             })
     
-    # Fallback: if no records found with primary pattern, try alternative approach
-    if not extracted_rows:
-        return _extract_waec_pdf_rows_fallback_v2(clean_text, school_name)
-
     return school_name, extracted_rows
 
 
