@@ -1622,7 +1622,14 @@ def load_circuit_lookup():
     mapping_df = load_circuit_mapping_df()
     if mapping_df.empty:
         return {}
-    return pd.Series(mapping_df["Circuit"].values, index=mapping_df["School_Name"]).to_dict()
+    # Create case-insensitive lookup with lowercase keys
+    base_lookup = pd.Series(mapping_df["Circuit"].values, index=mapping_df["School_Name"]).to_dict()
+    case_insensitive_lookup = {}
+    for school_name, circuit in base_lookup.items():
+        case_insensitive_lookup[school_name] = circuit
+        case_insensitive_lookup[school_name.lower()] = circuit
+        case_insensitive_lookup[school_name.upper()] = circuit
+    return case_insensitive_lookup
 
 
 def load_school_profile_lookup():
@@ -1630,7 +1637,15 @@ def load_school_profile_lookup():
     if mapping_df.empty:
         return {}
     mapping_df = mapping_df.drop_duplicates(subset=["School_Name"], keep="last")
-    return mapping_df.set_index("School_Name")[["Circuit", "School_Type"]].to_dict("index")
+    # Create case-insensitive lookup by normalizing school names to lowercase
+    lookup = mapping_df.set_index("School_Name")[["Circuit", "School_Type"]].to_dict("index")
+    # Add lowercase keys for case-insensitive matching
+    case_insensitive_lookup = {}
+    for school_name, profile in lookup.items():
+        case_insensitive_lookup[school_name] = profile
+        case_insensitive_lookup[school_name.lower()] = profile
+        case_insensitive_lookup[school_name.upper()] = profile
+    return case_insensitive_lookup
 
 
 def load_circuit_mapping_df():
@@ -3545,13 +3560,12 @@ def prepare_official_pdf_import(uploaded_bytes, uploaded_name, expected_school="
         raise ValueError("EduPulse could not determine the school name from the uploaded WAEC PDF.")
 
     school_profile_lookup = load_school_profile_lookup()
-    # Case-insensitive school lookup: PDF extracts names in all-caps, circuits CSV may vary
+    # Case-insensitive school lookup: try exact match, then lowercase, then uppercase
     school_profile = school_profile_lookup.get(resolved_school, {})
     if not school_profile:
-        matched_key = next((k for k in school_profile_lookup if k.casefold() == resolved_school.casefold()), None)
-        if matched_key:
-            school_profile = school_profile_lookup[matched_key]
-            resolved_school = matched_key
+        school_profile = school_profile_lookup.get(resolved_school.lower(), {})
+    if not school_profile:
+        school_profile = school_profile_lookup.get(resolved_school.upper(), {})
     resolved_circuit = school_profile.get("Circuit", "")
     resolved_school_type = school_profile.get("School_Type", "Not Specified")
     if not resolved_circuit:
@@ -3613,7 +3627,8 @@ def prepare_official_results_import(uploaded_df, school, school_circuit):
             + ". Include a student name column and try again."
         )
 
-    school_profile = load_school_profile_lookup().get(school, {})
+    school_profile_lookup = load_school_profile_lookup()
+    school_profile = school_profile_lookup.get(school, {}) or school_profile_lookup.get(school.lower(), {}) or school_profile_lookup.get(school.upper(), {})
     school_type = school_profile.get("School_Type", "Not Specified")
     official_df = pd.DataFrame(index=uploaded_df.index, columns=EXPECTED_DATA_COLUMNS)
     for column in EXPECTED_DATA_COLUMNS:
@@ -4246,7 +4261,8 @@ def render_circuit_setup(title, description, key_prefix, redirect_to_login=False
 def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
     st.markdown("### 📚 Headteacher Student Data Workspace")
     school = str(school).strip()
-    school_profile = load_school_profile_lookup().get(school, {})
+    school_profile_lookup = load_school_profile_lookup()
+    school_profile = school_profile_lookup.get(school, {}) or school_profile_lookup.get(school.lower(), {}) or school_profile_lookup.get(school.upper(), {})
     school_circuit = school_profile.get("Circuit", "")
     school_type = school_profile.get("School_Type", "Not Specified")
     st.write(
@@ -6010,7 +6026,8 @@ def manual_entry_form(df, subject_cols, school):
 
     csv_columns = [column for column in df.columns if column != "Search_Label"]
     suggested_student_id = f"{build_school_student_id_prefix(school)}-{get_next_school_student_id_number(school, build_school_student_id_prefix(school)):04d}"
-    school_profile = load_school_profile_lookup().get(school, {})
+    school_profile_lookup = load_school_profile_lookup()
+    school_profile = school_profile_lookup.get(school, {}) or school_profile_lookup.get(school.lower(), {}) or school_profile_lookup.get(school.upper(), {})
     suggested_attendance = resolve_attendance_default_value(
         existing_school_df=df[df["School_Name"].fillna("").astype(str).str.strip() == school].copy() if "School_Name" in df.columns else None,
         existing_all_df=df,
@@ -6121,7 +6138,8 @@ def manual_entry_form(df, subject_cols, school):
             record["Student_Name"] = student_name.strip()
             record["School_Name"] = school
             record["Date_of_Birth"] = date_of_birth.strip()
-            record["Circuit"] = school_profile.get("Circuit", load_circuit_lookup().get(school, school))
+            circuit_lookup = load_circuit_lookup()
+            record["Circuit"] = school_profile.get("Circuit", "") or circuit_lookup.get(school, "") or circuit_lookup.get(school.lower(), "") or circuit_lookup.get(school.upper(), "") or school
             record["School_Type"] = school_profile.get("School_Type", "Not Specified")
             record["Attendance_Percent"] = round(float(attendance_percent), 1)
 
@@ -6224,7 +6242,8 @@ def render_manual_grade_predictor(school):
             if not student_name.strip():
                 st.error("Enter the student name before saving this prediction.")
             else:
-                school_profile = load_school_profile_lookup().get(school, {})
+                school_profile_lookup = load_school_profile_lookup()
+                school_profile = school_profile_lookup.get(school, {}) or school_profile_lookup.get(school.lower(), {}) or school_profile_lookup.get(school.upper(), {})
                 save_manual_prediction(
                     {
                         "prediction_id": f"manual-pred-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{random.randint(1000, 9999)}",
