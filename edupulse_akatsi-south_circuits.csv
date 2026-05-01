@@ -1,33 +1,30 @@
-School_Name,Circuit
-Dzogadze JHS,Agbedrafor
-Gornikope JHS,Agbedrafor
-Hatsiukope JHS,Agbedrafor
-Akatsi Main JHS,Akatsi A
-Akatsicoe Practice JHS,Akatsi A
-Kpota JHS,Akatsi A
-Agbedrafor JHS,Akatsi B
-Awasive JHS,Akatsi B
-Xavi JHS,Akatsi B
-Adidome JHS,Atidzive
-Anloga JHS,Atidzive
-Atidzive JHS,Atidzive
-Dabala JHS,Atidzive
-Sogakope JHS,Atidzive
-Avenorpedo JHS,Avenorpedo
-Kpeve JHS,Avenorpedo
-Weta JHS,Avenorpedo
-Woe JHS,Avenorpedo
-Abor Main JHS,Avenorpeme
-Avenorpeme JHS,Avenorpeme
-Keta Zion JHS,Avenorpeme
-Tadzewu JHS,Avenorpeme
-Anyidzive JHS,Gefia
-Gefia JHS,Gefia
-Keta EP JHS,Gefia
-Lume Ahugakope JHS,Gefia
-Tegbi JHS,Gefia
-Wute JHS,Gefia
-Aflao Main JHS,Wlitey
-Denu JHS,Wlitey
-Dzodze Penyi JHS,Wlitey
-Wlitey JHS,Wlitey
+School_Name,Circuit,School_Type
+Abor Main JHS,Gefia,Public
+Akatsicoe Practice JHS,Gefia,Public
+Wlitey JHS,Gefia,Public
+Agbedrafor JHS,Gefia,Public
+Atidzive JHS,Akatsi A,Public
+Tegbi JHS,Akatsi A,Public
+Dzodze Penyi JHS,Akatsi A,Public
+Weta JHS,Akatsi B,Public
+Sogakope JHS,Akatsi B,Public
+Aflao Main JHS,Akatsi B,Public
+Akatsi Main JHS,Agbedrafor,Public
+Avenorpeme JHS,Agbedrafor,Public
+Tadzewu JHS,Agbedrafor,Private
+Dzogadze JHS,Avenorpeme,Public
+Lume Ahugakope JHS,Avenorpeme,Public
+Kpeve JHS,Avenorpeme,Public
+Awasive JHS,Avenorpeme,Private
+Xavi JHS,Avenorpeme,Public
+Anloga JHS,Avenorpedo,Public
+Hatsiukope JHS,Avenorpedo,Public
+Kpota JHS,Avenorpedo,Public
+Adidome JHS,Avenorpedo,Public
+Gefia JHS,Wlitey,Private
+Denu JHS,Wlitey,Public
+Woe JHS,Wlitey,Public
+Avenorpedo JHS,Wlitey,Public
+Dabala JHS,Atidzive,Public
+Keta EP JHS,Atidzive,Private
+Anyidzive JHS,Atidzive,Public

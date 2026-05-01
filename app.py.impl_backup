@@ -6,16 +6,12 @@ import json
 import os
 import random
 import re
-import secrets
 import smtplib
 import textwrap
 import urllib.parse
-import uuid
 import zipfile
 import zlib
 from datetime import datetime
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from email.message import EmailMessage
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -51,11 +47,8 @@ CONTACTS_FILE = "contact_directory.csv"
 MANUAL_PREDICTIONS_FILE = "manual_predictions.csv"
 MODEL_FILE = "bece_models.joblib"
 CALIBRATION_FILE = "school_calibration.json"
-OFFICIAL_MATCH_REVIEW_FILE = "official_match_reviews.csv"
 BRAND_IMAGE = r"C:\Users\SAVIOUR\Downloads\app_logo.png"
 FINAL_SUFFIX = "_Final_BECE"
-PREDICTED_SUFFIX = "_Predicted_BECE"
-MIGRATION_SCHOOL_TYPE_PLACEHOLDER = "Needs Review"
 PLACEMENT_ORDER = ["Category A", "Category B", "Category C", "Category D/SP"]
 USERS_COLUMNS = ["username", "password", "role", "school", "district", "security_key", "email", "security_question", "security_answer"]
 EXPECTED_CIRCUIT_COLUMNS = ["School_Name", "Circuit", "School_Type"]
@@ -89,9 +82,7 @@ SCENARIO_COLUMNS = [
     "district",
     "school",
     "circuit",
-    "internal_tracking_id",
     "student_id",
-    "official_index_number",
     "student_name",
     "scenario_name",
     "intervention_note",
@@ -138,25 +129,10 @@ MANUAL_PREDICTION_COLUMNS = [
     "placement_category",
     "created_by",
 ]
-OFFICIAL_MATCH_REVIEW_COLUMNS = [
-    "review_id",
-    "created_at",
-    "district",
-    "school",
-    "circuit",
-    "source_label",
-    "official_index_number",
-    "student_name",
-    "date_of_birth",
-    "reason",
-    "status",
-    "payload_json",
-]
 DIRECTOR_REGISTRATION_KEY_ENV = "EDUPULSE_OWNER_SECRET"
 GOOGLE_SHEETS_ID_ENV = "EDUPULSE_GOOGLE_SHEETS_ID"
 GOOGLE_SERVICE_ACCOUNT_JSON_ENV = "EDUPULSE_GOOGLE_SERVICE_ACCOUNT_JSON"
 VALID_SCHOOL_TYPES = ["Public", "Private"]
-RUNTIME_SCHOOL_TYPES = VALID_SCHOOL_TYPES + [MIGRATION_SCHOOL_TYPE_PLACEHOLDER, "Not Specified"]
 WAEC_ACCEPTED_FIELDS = [
     "INDEX NUMBER",
     "NAME",
@@ -164,7 +140,12 @@ WAEC_ACCEPTED_FIELDS = [
     "DOB",
     "RESULTS",
 ]
-WAEC_EXPLICIT_VERTICAL_LINES = [0, 250, 420, 475, 555, 842]
+WAEC_COLUMN_BOUNDARIES = {
+    "index": 390,
+    "name": 520,
+    "gender": 595,
+    "dob": 705,
+}
 SUBJECT_DISPLAY_NAMES = {
     "Mathematics": "Mathematics",
     "English_Language": "English Language",
@@ -200,7 +181,6 @@ WAEC_RESULT_SUBJECT_MAP = {
 }
 SUBJECT_IMPORT_ALIASES = {
     "Student_ID": ["student id", "student_id", "index number", "index_number", "candidate number", "candidate_no", "candidate id"],
-    "Official_Index_Number": ["official index number", "official_index_number", "waec index number", "waec_index_number"],
     "Student_Name": ["student name", "student_name", "candidate name", "candidate_name", "full name", "name"],
     "Gender": ["gender", "sex"],
     "Date_of_Birth": ["date of birth", "dob", "birth date", "date_of_birth"],
@@ -219,23 +199,8 @@ SUBJECT_IMPORT_ALIASES = {
     "French_Final_BECE": ["french", "french score"],
     "Ewe_Final_BECE": ["ewe", "ewe score"],
 }
-SUBJECT_PREFIXES = [
-    "Mathematics",
-    "English_Language",
-    "Integrated_Science",
-    "Social_Studies",
-    "ICT",
-    "RME",
-    "BDT",
-    "French",
-    "Ewe",
-]
-FINAL_SUBJECT_COLUMNS = [f"{prefix}{FINAL_SUFFIX}" for prefix in SUBJECT_PREFIXES]
-PREDICTED_SUBJECT_COLUMNS = [f"{prefix}{PREDICTED_SUFFIX}" for prefix in SUBJECT_PREFIXES]
 EXPECTED_DATA_COLUMNS = [
-    "Internal_Tracking_ID",
     "Student_ID",
-    "Official_Index_Number",
     "Student_Name",
     "Gender",
     "Date_of_Birth",
@@ -248,63 +213,54 @@ EXPECTED_DATA_COLUMNS = [
     "Mathematics_Term2_Exam",
     "Mathematics_Mock1",
     "Mathematics_Mock2",
-    "Mathematics_Predicted_BECE",
     "Mathematics_Final_BECE",
     "English_Language_Assignments",
     "English_Language_Term1_Exam",
     "English_Language_Term2_Exam",
     "English_Language_Mock1",
     "English_Language_Mock2",
-    "English_Language_Predicted_BECE",
     "English_Language_Final_BECE",
     "Integrated_Science_Assignments",
     "Integrated_Science_Term1_Exam",
     "Integrated_Science_Term2_Exam",
     "Integrated_Science_Mock1",
     "Integrated_Science_Mock2",
-    "Integrated_Science_Predicted_BECE",
     "Integrated_Science_Final_BECE",
     "Social_Studies_Assignments",
     "Social_Studies_Term1_Exam",
     "Social_Studies_Term2_Exam",
     "Social_Studies_Mock1",
     "Social_Studies_Mock2",
-    "Social_Studies_Predicted_BECE",
     "Social_Studies_Final_BECE",
     "ICT_Assignments",
     "ICT_Term1_Exam",
     "ICT_Term2_Exam",
     "ICT_Mock1",
     "ICT_Mock2",
-    "ICT_Predicted_BECE",
     "ICT_Final_BECE",
     "RME_Assignments",
     "RME_Term1_Exam",
     "RME_Term2_Exam",
     "RME_Mock1",
     "RME_Mock2",
-    "RME_Predicted_BECE",
     "RME_Final_BECE",
     "BDT_Assignments",
     "BDT_Term1_Exam",
     "BDT_Term2_Exam",
     "BDT_Mock1",
     "BDT_Mock2",
-    "BDT_Predicted_BECE",
     "BDT_Final_BECE",
     "French_Assignments",
     "French_Term1_Exam",
     "French_Term2_Exam",
     "French_Mock1",
     "French_Mock2",
-    "French_Predicted_BECE",
     "French_Final_BECE",
     "Ewe_Assignments",
     "Ewe_Term1_Exam",
     "Ewe_Term2_Exam",
     "Ewe_Mock1",
     "Ewe_Mock2",
-    "Ewe_Predicted_BECE",
     "Ewe_Final_BECE",
     "Official_Results_Raw",
     "Math_Improvement",
@@ -314,16 +270,7 @@ EXPECTED_DATA_COLUMNS = [
 PREDICTION_TEMPLATE_COLUMNS = [
     column
     for column in EXPECTED_DATA_COLUMNS
-    if (
-        not column.endswith(FINAL_SUFFIX)
-        and not column.endswith(PREDICTED_SUFFIX)
-        and column not in {"Internal_Tracking_ID", "Official_Index_Number", "Official_Results_Raw", "Math_Improvement", "Math_Consistency", "Action_Zone"}
-    )
-]
-HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS = [
-    column
-    for column in PREDICTION_TEMPLATE_COLUMNS
-    if column not in {"Student_ID", "School_Name", "Circuit", "School_Type"}
+    if not column.endswith(FINAL_SUFFIX) and column not in {"Official_Results_Raw", "Math_Improvement", "Math_Consistency", "Action_Zone"}
 ]
 CORE_FINAL_SUBJECTS = [
     "Mathematics_Final_BECE",
@@ -659,8 +606,6 @@ def normalize_school_type(value):
         return "Public"
     if token in {"private", "priv"}:
         return "Private"
-    if token in {"needsreview", "notspecified", "unclassified", "unknown"}:
-        return MIGRATION_SCHOOL_TYPE_PLACEHOLDER
     return ""
 
 
@@ -673,61 +618,6 @@ def summarize_invalid_school_type_values(series):
     canonical = raw_values.apply(normalize_school_type)
     invalid_values = sorted(raw_values[(raw_values != "") & (canonical == "")].unique().tolist())
     return invalid_values
-
-
-def normalize_student_name(value):
-    cleaned = re.sub(r"[^A-Z0-9 ]+", " ", str(value).upper())
-    tokens = [token for token in re.sub(r"\s+", " ", cleaned).strip().split(" ") if token]
-    return " ".join(sorted(tokens))
-
-
-def normalize_gender_token(value):
-    token = str(value).strip().lower()
-    if token in {"m", "male", "boy", "boys"}:
-        return "M"
-    if token in {"f", "female", "girl", "girls"}:
-        return "F"
-    return ""
-
-
-def normalize_date_of_birth(value):
-    raw_value = str(value).strip()
-    if not raw_value or raw_value.lower() in {"nan", "none"}:
-        return ""
-
-    normalized = raw_value.replace(".", "/").replace("-", "/")
-    match = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", normalized)
-    if match:
-        day, month, year = [int(part) for part in match.groups()]
-        if year < 100:
-            current_two_digit_year = datetime.utcnow().year % 100
-            year += 2000 if year <= current_two_digit_year else 1900
-        try:
-            return datetime(year, month, day).strftime("%Y-%m-%d")
-        except ValueError:
-            return ""
-
-    parsed = pd.to_datetime(pd.Series([raw_value]), dayfirst=True, errors="coerce").iloc[0]
-    if pd.isna(parsed):
-        return ""
-    return parsed.strftime("%Y-%m-%d")
-
-
-def normalize_date_of_birth_series(series):
-    return series.fillna("").astype(str).apply(normalize_date_of_birth)
-
-
-def generate_internal_tracking_id():
-    return f"track-{uuid.uuid4().hex[:16]}"
-
-
-def build_internal_match_key(school_name, student_name, date_of_birth):
-    school_token = normalize_student_name(school_name)
-    student_token = normalize_student_name(student_name)
-    dob_token = normalize_date_of_birth(date_of_birth)
-    if not school_token or not student_token or not dob_token:
-        return ""
-    return f"{school_token}::{student_token}::{dob_token}"
 
 
 def get_backend_worksheet_name(table_key):
@@ -879,171 +769,6 @@ def write_table_df(table_key, df, columns):
             pass
 
     safe_df.to_csv(table_key, index=False)
-
-
-def get_final_subject_column(subject_col_or_prefix):
-    prefix = str(subject_col_or_prefix).replace(FINAL_SUFFIX, "").replace(PREDICTED_SUFFIX, "")
-    return f"{prefix}{FINAL_SUFFIX}"
-
-
-def get_predicted_subject_column(subject_col_or_prefix):
-    prefix = str(subject_col_or_prefix).replace(FINAL_SUFFIX, "").replace(PREDICTED_SUFFIX, "")
-    return f"{prefix}{PREDICTED_SUFFIX}"
-
-
-def build_empty_student_row():
-    return {column: pd.NA for column in EXPECTED_DATA_COLUMNS}
-
-
-def migrate_legacy_circuit_df(circuit_df):
-    if circuit_df is None:
-        return pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS), False
-
-    working_df = circuit_df.copy()
-    changed = False
-    for column in EXPECTED_CIRCUIT_COLUMNS:
-        if column not in working_df.columns:
-            working_df[column] = ""
-            changed = True
-
-    working_df = clean_uploaded_dataframe(working_df)
-    working_df["School_Name"] = working_df["School_Name"].fillna("").astype(str).str.strip()
-    working_df["Circuit"] = working_df["Circuit"].fillna("").astype(str).str.strip()
-    raw_school_types = working_df["School_Type"].copy()
-    working_df["School_Type"] = normalize_school_type_series(working_df["School_Type"])
-    missing_school_type_mask = working_df["School_Type"].eq("")
-    if missing_school_type_mask.any():
-        changed = True
-        working_df.loc[missing_school_type_mask, "School_Type"] = MIGRATION_SCHOOL_TYPE_PLACEHOLDER
-    if not raw_school_types.fillna("").astype(str).equals(working_df["School_Type"].fillna("").astype(str)):
-        changed = True
-
-    working_df = working_df[EXPECTED_CIRCUIT_COLUMNS].copy()
-    working_df = working_df[(working_df["School_Name"] != "") & (working_df["Circuit"] != "")]
-    working_df = working_df.drop_duplicates(subset=["School_Name"], keep="last").reset_index(drop=True)
-    return working_df, changed
-
-
-def migrate_legacy_student_df(student_df, school_profile_lookup=None):
-    if student_df is None:
-        return pd.DataFrame(columns=EXPECTED_DATA_COLUMNS), False
-
-    working_df = student_df.copy()
-    changed = False
-    for column in EXPECTED_DATA_COLUMNS:
-        if column not in working_df.columns:
-            working_df[column] = pd.NA
-            changed = True
-
-    working_df = clean_uploaded_dataframe(working_df)
-    for column in EXPECTED_DATA_COLUMNS:
-        if column not in working_df.columns:
-            working_df[column] = pd.NA
-            changed = True
-    working_df = working_df[EXPECTED_DATA_COLUMNS].copy()
-
-    text_columns = [
-        "Internal_Tracking_ID",
-        "Student_ID",
-        "Official_Index_Number",
-        "Student_Name",
-        "Gender",
-        "Date_of_Birth",
-        "School_Name",
-        "Circuit",
-        "School_Type",
-        "Official_Results_Raw",
-        "Action_Zone",
-    ]
-    for column in text_columns:
-        working_df[column] = working_df[column].fillna("").astype(str).str.strip()
-        working_df.loc[working_df[column].isin(["nan", "None"]), column] = ""
-
-    working_df["Date_of_Birth"] = normalize_date_of_birth_series(working_df["Date_of_Birth"])
-
-    if school_profile_lookup is None:
-        school_profile_lookup = {}
-    if school_profile_lookup and "School_Name" in working_df.columns:
-        mapped_circuits = working_df["School_Name"].map(lambda school: school_profile_lookup.get(school, {}).get("Circuit", ""))
-        mapped_school_types = working_df["School_Name"].map(lambda school: school_profile_lookup.get(school, {}).get("School_Type", ""))
-        if working_df["Circuit"].fillna("").astype(str).str.strip().eq("").any():
-            changed = True
-        if working_df["School_Type"].fillna("").astype(str).str.strip().eq("").any():
-            changed = True
-        working_df["Circuit"] = working_df["Circuit"].mask(working_df["Circuit"].eq(""), mapped_circuits)
-        working_df["School_Type"] = working_df["School_Type"].mask(working_df["School_Type"].eq(""), mapped_school_types)
-
-    raw_school_types = working_df["School_Type"].copy()
-    working_df["School_Type"] = normalize_school_type_series(working_df["School_Type"])
-    missing_school_type_mask = working_df["School_Type"].eq("")
-    if missing_school_type_mask.any():
-        working_df.loc[missing_school_type_mask, "School_Type"] = MIGRATION_SCHOOL_TYPE_PLACEHOLDER
-        changed = True
-    if not raw_school_types.fillna("").astype(str).equals(working_df["School_Type"].fillna("").astype(str)):
-        changed = True
-
-    internal_id_mask = working_df["Internal_Tracking_ID"].fillna("").astype(str).str.strip().eq("")
-    if internal_id_mask.any():
-        changed = True
-        working_df.loc[internal_id_mask, "Internal_Tracking_ID"] = [generate_internal_tracking_id() for _ in range(int(internal_id_mask.sum()))]
-
-    official_id_mask = working_df["Official_Index_Number"].fillna("").astype(str).str.strip().eq("")
-    candidate_official_id_mask = working_df["Student_ID"].fillna("").astype(str).str.fullmatch(r"\d{10}")
-    fill_official_mask = official_id_mask & candidate_official_id_mask.fillna(False)
-    if fill_official_mask.any():
-        changed = True
-        working_df.loc[fill_official_mask, "Official_Index_Number"] = working_df.loc[fill_official_mask, "Student_ID"]
-
-    for predicted_col, final_col, prefix in zip(PREDICTED_SUBJECT_COLUMNS, FINAL_SUBJECT_COLUMNS, SUBJECT_PREFIXES):
-        predicted_values = pd.to_numeric(working_df[predicted_col], errors="coerce")
-        final_values = pd.to_numeric(working_df[final_col], errors="coerce")
-        assessment_columns = [f"{prefix}_{suffix}" for suffix in ASSESSMENT_SUFFIXES if f"{prefix}_{suffix}" in working_df.columns]
-        has_assessment = working_df[assessment_columns].apply(pd.to_numeric, errors="coerce").notna().any(axis=1) if assessment_columns else pd.Series(False, index=working_df.index)
-        has_official_context = working_df["Official_Index_Number"].fillna("").astype(str).str.strip().ne("") | working_df["Official_Results_Raw"].fillna("").astype(str).str.strip().ne("")
-        legacy_prediction_mask = predicted_values.isna() & final_values.notna() & has_assessment & ~has_official_context
-        if legacy_prediction_mask.any():
-            working_df.loc[legacy_prediction_mask, predicted_col] = working_df.loc[legacy_prediction_mask, final_col]
-            working_df.loc[legacy_prediction_mask, final_col] = pd.NA
-            changed = True
-
-    return working_df, changed
-
-
-def run_storage_migrations():
-    sheet = get_google_sheet()
-    if sheet is not None:
-        current_circuits_df = read_table_df(CIRCUITS_FILE, EXPECTED_CIRCUIT_COLUMNS)
-        migrated_circuits_df, circuits_changed = migrate_legacy_circuit_df(current_circuits_df)
-        if circuits_changed:
-            write_table_df(CIRCUITS_FILE, migrated_circuits_df, EXPECTED_CIRCUIT_COLUMNS)
-
-        school_profile_lookup = migrated_circuits_df.set_index("School_Name")[["Circuit", "School_Type"]].to_dict("index") if not migrated_circuits_df.empty else {}
-        current_student_df = read_table_df(DATA_FILE, EXPECTED_DATA_COLUMNS)
-        migrated_student_df, student_changed = migrate_legacy_student_df(current_student_df, school_profile_lookup=school_profile_lookup)
-        if student_changed:
-            write_table_df(DATA_FILE, migrated_student_df, EXPECTED_DATA_COLUMNS)
-        return
-
-    if os.path.isfile(CIRCUITS_FILE):
-        try:
-            local_circuits_df = pd.read_csv(CIRCUITS_FILE, dtype=str).fillna("")
-        except Exception:
-            local_circuits_df = pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS)
-        migrated_circuits_df, circuits_changed = migrate_legacy_circuit_df(local_circuits_df)
-        if circuits_changed:
-            migrated_circuits_df.to_csv(CIRCUITS_FILE, index=False)
-    else:
-        migrated_circuits_df = pd.DataFrame(columns=EXPECTED_CIRCUIT_COLUMNS)
-
-    school_profile_lookup = migrated_circuits_df.set_index("School_Name")[["Circuit", "School_Type"]].to_dict("index") if not migrated_circuits_df.empty else {}
-    if os.path.isfile(DATA_FILE):
-        try:
-            local_student_df = pd.read_csv(DATA_FILE, dtype=str).fillna("")
-        except Exception:
-            local_student_df = pd.DataFrame(columns=EXPECTED_DATA_COLUMNS)
-        migrated_student_df, student_changed = migrate_legacy_student_df(local_student_df, school_profile_lookup=school_profile_lookup)
-        if student_changed:
-            migrated_student_df.to_csv(DATA_FILE, index=False)
 
 
 def read_app_config_record(default_config):
@@ -1342,32 +1067,6 @@ def build_manual_prediction_summary_df(district=""):
     return manual_df.drop(columns=["dedupe_key"], errors="ignore").reset_index(drop=True)
 
 
-def load_match_review_df():
-    review_df = read_table_df(OFFICIAL_MATCH_REVIEW_FILE, OFFICIAL_MATCH_REVIEW_COLUMNS)
-    if review_df.empty:
-        return pd.DataFrame(columns=OFFICIAL_MATCH_REVIEW_COLUMNS)
-
-    for column in OFFICIAL_MATCH_REVIEW_COLUMNS:
-        if column not in review_df.columns:
-            review_df[column] = ""
-    return review_df[OFFICIAL_MATCH_REVIEW_COLUMNS].copy()
-
-
-def save_match_review_df(review_df):
-    safe_df = review_df.copy()
-    for column in OFFICIAL_MATCH_REVIEW_COLUMNS:
-        if column not in safe_df.columns:
-            safe_df[column] = ""
-    safe_df = safe_df[OFFICIAL_MATCH_REVIEW_COLUMNS].fillna("")
-    write_table_df(OFFICIAL_MATCH_REVIEW_FILE, safe_df, OFFICIAL_MATCH_REVIEW_COLUMNS)
-
-
-def append_match_review(review_row):
-    review_df = load_match_review_df()
-    review_df = pd.concat([review_df, pd.DataFrame([review_row], columns=OFFICIAL_MATCH_REVIEW_COLUMNS)], ignore_index=True)
-    save_match_review_df(review_df)
-
-
 def upsert_contact(contact_row):
     contacts_df = load_contacts_df()
     district = str(contact_row.get("district", "")).strip()
@@ -1650,9 +1349,9 @@ def load_circuit_mapping_df():
     mapping_df["School_Name"] = mapping_df["School_Name"].astype(str).str.strip()
     mapping_df["Circuit"] = mapping_df["Circuit"].astype(str).str.strip()
     mapping_df["School_Type"] = normalize_school_type_series(mapping_df["School_Type"])
-    mapping_df.loc[mapping_df["School_Type"] == "", "School_Type"] = MIGRATION_SCHOOL_TYPE_PLACEHOLDER
+    mapping_df = mapping_df[mapping_df["School_Type"] != ""]
     mapping_df = mapping_df[(mapping_df["School_Name"] != "") & (mapping_df["Circuit"] != "")]
-    return mapping_df[EXPECTED_CIRCUIT_COLUMNS].drop_duplicates(subset=["School_Name"], keep="last").reset_index(drop=True)
+    return mapping_df[EXPECTED_CIRCUIT_COLUMNS].drop_duplicates().reset_index(drop=True)
 
 
 def load_all_circuits():
@@ -1717,15 +1416,11 @@ def validate_prediction_template_columns(columns):
     normalized_columns = [str(column).replace("﻿", "").strip() for column in columns]
     if normalized_columns == PREDICTION_TEMPLATE_COLUMNS:
         return True, "Column structure matches the required prediction template."
+
     if sorted(normalized_columns) == sorted(PREDICTION_TEMPLATE_COLUMNS) and len(normalized_columns) == len(PREDICTION_TEMPLATE_COLUMNS):
         return True, "Column names match the required prediction template."
-    if normalized_columns == HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS:
-        return True, "Column structure matches the headteacher upload template."
-    if sorted(normalized_columns) == sorted(HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS) and len(normalized_columns) == len(HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS):
-        return True, "Column names match the headteacher upload template."
 
-    _required = HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS
-    missing_columns = [column for column in _required if column not in normalized_columns]
+    missing_columns = [column for column in PREDICTION_TEMPLATE_COLUMNS if column not in normalized_columns]
     extra_columns = [column for column in normalized_columns if column not in PREDICTION_TEMPLATE_COLUMNS]
     message_parts = []
     if missing_columns:
@@ -1745,7 +1440,7 @@ def validate_circuit_columns(columns):
     if normalized_columns == EXPECTED_CIRCUIT_COLUMNS:
         return True, "Circuit template columns match the required template."
     if normalized_columns == legacy_columns:
-        return False, "School_Type is required for new uploads. Legacy files will be migrated to a visible placeholder, but new uploads should use only Public or Private."
+        return False, "School_Type is required and must be either Public or Private for each school row."
 
     missing_columns = [column for column in legacy_columns if column not in normalized_columns]
     extra_columns = [column for column in normalized_columns if column not in EXPECTED_CIRCUIT_COLUMNS]
@@ -1885,30 +1580,30 @@ def assign_missing_school_student_ids(student_df, school, existing_school_df=Non
     return assigned_df, missing_count
 
 
-def assign_missing_internal_tracking_ids(student_df):
-    if student_df.empty or "Internal_Tracking_ID" not in student_df.columns:
-        return student_df.copy(), 0
-
-    assigned_df = student_df.copy()
-    missing_mask = assigned_df["Internal_Tracking_ID"].fillna("").astype(str).str.strip().eq("")
-    missing_count = int(missing_mask.sum())
-    if missing_count == 0:
-        return assigned_df, 0
-
-    assigned_df.loc[missing_mask, "Internal_Tracking_ID"] = [generate_internal_tracking_id() for _ in range(missing_count)]
-    return assigned_df, missing_count
-
-
-def build_headteacher_student_template_bytes(school, circuit="", school_type="", num_students=None):
-    num_rows = int(num_students) if num_students and int(num_students) > 0 else HEADTEACHER_TEMPLATE_ROWS
+def build_headteacher_student_template_bytes(school, circuit="", school_type=""):
     output = io.StringIO()
     writer = csv.writer(output)
+    # Add warning comment at top - users should NOT modify column headers
     writer.writerow(["# WARNING: DO NOT EDIT OR DELETE THESE COLUMN HEADERS - ONLY FILL IN DATA ROWS BELOW"])
     writer.writerow(["#"])
-    writer.writerow(HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS)
-    for _ in range(num_rows):
-        writer.writerow([""] * len(HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS))
-    footer_row = [""] * len(HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS)
+    writer.writerow(PREDICTION_TEMPLATE_COLUMNS)
+
+    student_id_index = PREDICTION_TEMPLATE_COLUMNS.index("Student_ID")
+    school_index = PREDICTION_TEMPLATE_COLUMNS.index("School_Name")
+    circuit_index = PREDICTION_TEMPLATE_COLUMNS.index("Circuit")
+    school_type_index = PREDICTION_TEMPLATE_COLUMNS.index("School_Type")
+    student_id_prefix = build_school_student_id_prefix(school)
+    next_number = get_next_school_student_id_number(school, student_id_prefix)
+
+    for offset in range(HEADTEACHER_TEMPLATE_ROWS):
+        row = [""] * len(PREDICTION_TEMPLATE_COLUMNS)
+        row[student_id_index] = f"{student_id_prefix}-{next_number + offset:04d}"
+        row[school_index] = school
+        row[circuit_index] = circuit
+        row[school_type_index] = school_type or "Not Specified"
+        writer.writerow(row)
+
+    footer_row = [""] * len(PREDICTION_TEMPLATE_COLUMNS)
     footer_row[0] = BLOOMCORE_FOOTER_TEXT
     writer.writerow(footer_row)
     return output.getvalue().encode("utf-8")
@@ -2072,30 +1767,30 @@ def load_data(show_errors=True):
         st.error(f"Critical data error: {exc}")
         return pd.DataFrame(), []
 
-    school_profile_lookup = load_school_profile_lookup()
-    df, _ = migrate_legacy_student_df(clean_uploaded_dataframe(df), school_profile_lookup=school_profile_lookup)
+    df = clean_uploaded_dataframe(df)
+    for column in EXPECTED_DATA_COLUMNS:
+        if column not in df.columns:
+            df[column] = pd.NA
+    df = df[EXPECTED_DATA_COLUMNS].copy()
 
-    for column in ["Internal_Tracking_ID", "Student_ID", "Official_Index_Number", "Student_Name", "Gender", "Date_of_Birth", "School_Name", "Circuit", "School_Type", "Action_Zone"]:
+    for column in ["Student_ID", "Student_Name", "Gender", "Date_of_Birth", "School_Name", "Circuit", "School_Type", "Action_Zone"]:
         if column in df.columns:
             df[column] = df[column].fillna("").astype(str).str.strip()
             df.loc[df[column].isin(["nan", "None"]), column] = ""
 
+    school_profile_lookup = load_school_profile_lookup()
     if "School_Name" in df.columns:
         mapped_circuits = df["School_Name"].map(lambda school: school_profile_lookup.get(school, {}).get("Circuit", ""))
         mapped_school_types = df["School_Name"].map(lambda school: school_profile_lookup.get(school, {}).get("School_Type", ""))
         df["Circuit"] = df["Circuit"].mask(df["Circuit"].eq(""), mapped_circuits).fillna(df["School_Name"])
-        df["School_Type"] = df["School_Type"].mask(df["School_Type"].eq(""), mapped_school_types).fillna(MIGRATION_SCHOOL_TYPE_PLACEHOLDER)
+        df["School_Type"] = df["School_Type"].mask(df["School_Type"].eq(""), mapped_school_types).fillna("Not Specified")
         df["Circuit"] = df["Circuit"].fillna("").astype(str).str.strip()
         df["School_Type"] = normalize_school_type_series(df["School_Type"])
-        df.loc[df["School_Type"] == "", "School_Type"] = MIGRATION_SCHOOL_TYPE_PLACEHOLDER
 
     if "Action_Zone" in df.columns:
         df["Action_Zone"] = df["Action_Zone"].apply(normalize_action_zone)
 
-    if "Date_of_Birth" in df.columns:
-        df["Date_of_Birth"] = normalize_date_of_birth_series(df["Date_of_Birth"])
-
-    subject_cols = [column for column in FINAL_SUBJECT_COLUMNS if column in df.columns]
+    subject_cols = [column for column in df.columns if column.endswith(FINAL_SUFFIX)]
 
     if "Student_Name" in df.columns and "Student_ID" in df.columns:
         df["Search_Label"] = (
@@ -2172,12 +1867,12 @@ def normalize_gender(value):
 
 
 def format_subject_name(subject_col):
-    prefix = get_subject_prefix(subject_col)
+    prefix = subject_col.replace(FINAL_SUFFIX, "")
     return SUBJECT_DISPLAY_NAMES.get(prefix, prefix.replace("_", " "))
 
 
 def is_core_subject(subject_col):
-    return get_subject_prefix(subject_col) in {get_subject_prefix(column) for column in CORE_FINAL_SUBJECTS}
+    return subject_col in CORE_FINAL_SUBJECTS
 
 
 def safe_float(value, default=0.0):
@@ -2237,7 +1932,7 @@ def normalize_header_text(value):
 
 
 def get_subject_prefix(subject_col):
-    return str(subject_col).replace(FINAL_SUFFIX, "").replace(PREDICTED_SUFFIX, "")
+    return str(subject_col).replace(FINAL_SUFFIX, "")
 
 
 def get_subject_model_key(subject_col):
@@ -2253,8 +1948,7 @@ def get_subject_source_columns(subject_col):
         "term2": f"{prefix}_Term2_Exam",
         "mock1": f"{prefix}_Mock1",
         "mock2": f"{prefix}_Mock2",
-        "predicted": get_predicted_subject_column(prefix),
-        "final": get_final_subject_column(prefix),
+        "final": subject_col,
     }
 
 
@@ -2279,10 +1973,7 @@ def compute_continuous_assessment_score(row, subject_col):
 
 def build_subject_feature_snapshot(row, subject_col, attendance_value=None, assignment_value=None, mock_value=None):
     columns = get_subject_source_columns(subject_col)
-    current_final = safe_float(
-        row.get(columns["predicted"]),
-        safe_float(row.get(columns["final"]), 50.0),
-    )
+    current_final = safe_float(row.get(columns["final"]), 50.0)
     attendance = safe_float(row.get("Attendance_Percent"), 75.0)
     assignments = safe_float(row.get(columns["assignments"]), current_final)
     term1 = safe_float(row.get(columns["term1"]), assignments)
@@ -2399,10 +2090,7 @@ def predict_subject_score_ml(row, subject_col, model_bundle, attendance_value=No
     calibration_map = get_live_calibration_map()
     school_bias = get_school_subject_bias(calibration_map, row.get("School_Name", ""), subject_col)
     model_details = model_bundle.get(get_subject_model_key(subject_col))
-    baseline_score = safe_float(
-        row.get(columns["predicted"]) if (columns := get_subject_source_columns(subject_col)) else None,
-        safe_float(row.get(columns["final"]), feature_snapshot[f"{get_subject_prefix(subject_col)}_Weighted_30_70_Proxy"]),
-    )
+    baseline_score = safe_float(row.get(subject_col), feature_snapshot[f"{get_subject_prefix(subject_col)}_Weighted_30_70_Proxy"])
 
     if not model_details:
         predicted_score = feature_snapshot[f"{get_subject_prefix(subject_col)}_Weighted_30_70_Proxy"]
@@ -2428,28 +2116,14 @@ def predict_subject_score_ml(row, subject_col, model_bundle, attendance_value=No
     }
 
 
-def resolve_subject_score(row, subject_col, data_mode="best_available"):
-    subject_sources = get_subject_source_columns(subject_col)
-    predicted_score = pd.to_numeric(pd.Series([row.get(subject_sources["predicted"])]), errors="coerce").iloc[0]
-    official_score = pd.to_numeric(pd.Series([row.get(subject_sources["final"])]), errors="coerce").iloc[0]
-
-    if data_mode == "official":
-        return official_score
-    if data_mode == "forecast":
-        return predicted_score
-    return official_score if pd.notna(official_score) else predicted_score
-
-
-def compute_student_outcome_details(row, subject_cols, score_override=None, data_mode="best_available"):
+def compute_student_outcome_details(row, subject_cols, score_override=None):
     score_override = score_override or {}
     subject_details = []
     core_details = []
     elective_details = []
 
     for subject in subject_cols:
-        subject_sources = get_subject_source_columns(subject)
-        override_value = score_override.get(subject, score_override.get(subject_sources["predicted"]))
-        raw_score = override_value if override_value is not None else resolve_subject_score(row, subject, data_mode=data_mode)
+        raw_score = score_override.get(subject, row.get(subject))
         numeric_score = pd.to_numeric(pd.Series([raw_score]), errors="coerce").iloc[0]
         if pd.isna(numeric_score):
             continue
@@ -2491,24 +2165,22 @@ def compute_student_outcome_details(row, subject_cols, score_override=None, data
     }
 
 
-def compute_student_aggregate(row, subject_cols, data_mode="best_available"):
-    outcome_details = compute_student_outcome_details(row, subject_cols, data_mode=data_mode)
+def compute_student_aggregate(row, subject_cols):
+    outcome_details = compute_student_outcome_details(row, subject_cols)
     core_grades = [item["grade"] for item in outcome_details["core_details"]]
     elective_grades = [item["grade"] for item in outcome_details["elective_details"]]
     return outcome_details["aggregate"], core_grades, elective_grades
 
 
-def build_aggregate_dataframe(df, subject_cols, data_mode="best_available"):
+def build_aggregate_dataframe(df, subject_cols):
     if df.empty or not subject_cols:
         return pd.DataFrame()
 
     rows = []
     for _, student_row in df.iterrows():
-        outcome_details = compute_student_outcome_details(student_row, subject_cols, data_mode=data_mode)
+        outcome_details = compute_student_outcome_details(student_row, subject_cols)
         row = {
-            "Internal_Tracking_ID": student_row.get("Internal_Tracking_ID", ""),
             "Student_ID": student_row.get("Student_ID", ""),
-            "Official_Index_Number": student_row.get("Official_Index_Number", ""),
             "Student_Name": student_row.get("Student_Name", ""),
             "School_Name": student_row.get("School_Name", ""),
             "Circuit": student_row.get("Circuit", student_row.get("School_Name", "")),
@@ -2518,13 +2190,7 @@ def build_aggregate_dataframe(df, subject_cols, data_mode="best_available"):
             "Best_Two_Electives": outcome_details["best_two_subject_names"],
             "Best_Six_Raw_Total": outcome_details["best_six_raw_total"],
             "Best_Six_Raw_Average": outcome_details["raw_average"],
-            "Data_Mode": data_mode,
         }
-        if data_mode == "best_available":
-            row["Data_Mode"] = "Official" if any(
-                pd.notna(pd.to_numeric(pd.Series([student_row.get(get_final_subject_column(subject))]), errors="coerce").iloc[0])
-                for subject in subject_cols
-            ) else "Forecast"
         if "Gender" in df.columns:
             row["Gender"] = normalize_gender(student_row.get("Gender", ""))
         if "School_Type" in df.columns:
@@ -3125,10 +2791,9 @@ def prepare_student_upload_df(uploaded_df):
             cleaned_df[column] = pd.NA
 
     cleaned_df = cleaned_df[EXPECTED_DATA_COLUMNS].copy()
-    for column in ["Internal_Tracking_ID", "Student_ID", "Official_Index_Number", "Student_Name", "Gender", "Date_of_Birth", "School_Name", "Circuit", "School_Type", "Action_Zone", "Official_Results_Raw"]:
+    for column in ["Student_ID", "Student_Name", "Gender", "Date_of_Birth", "School_Name", "Circuit", "School_Type", "Action_Zone", "Official_Results_Raw"]:
         cleaned_df[column] = cleaned_df[column].fillna("").astype(str).str.strip()
         cleaned_df.loc[cleaned_df[column].isin(["nan", "None"]), column] = ""
-    cleaned_df["Date_of_Birth"] = normalize_date_of_birth_series(cleaned_df["Date_of_Birth"])
 
     school_profile_lookup = load_school_profile_lookup()
     if school_profile_lookup:
@@ -3149,12 +2814,15 @@ def prepare_student_upload_df(uploaded_df):
         )
     missing_school_type_mask = cleaned_df["School_Type"].fillna("").astype(str).str.strip().eq("")
     if missing_school_type_mask.any():
-        cleaned_df.loc[missing_school_type_mask, "School_Type"] = MIGRATION_SCHOOL_TYPE_PLACEHOLDER
+        raise ValueError(
+            "School_Type is required for every row and must be Public or Private. "
+            "Please update the circuits setup for schools with missing type."
+        )
 
     meaningful_columns = [
         column
         for column in EXPECTED_DATA_COLUMNS
-        if column not in {"Internal_Tracking_ID", "Student_ID", "Official_Index_Number", "School_Name", "Circuit", "School_Type"}
+        if column not in {"Student_ID", "School_Name", "Circuit", "School_Type"}
     ]
     meaningful_mask = pd.Series(False, index=cleaned_df.index)
     for column in meaningful_columns:
@@ -3184,28 +2852,24 @@ def populate_provisional_final_scores(student_df):
 
     enriched_df = student_df.copy()
     model_bundle = get_live_ml_bundle()
-    final_subject_cols = [column for column in FINAL_SUBJECT_COLUMNS if column in EXPECTED_DATA_COLUMNS]
+    final_subject_cols = [column for column in EXPECTED_DATA_COLUMNS if column.endswith(FINAL_SUFFIX)]
 
     for index, row in enriched_df.iterrows():
-        predicted_scores = []
+        final_scores = []
         for subject_col in final_subject_cols:
             subject_sources = get_subject_source_columns(subject_col)
-            predicted_column = subject_sources["predicted"]
-            existing_prediction = pd.to_numeric(pd.Series([row.get(predicted_column)]), errors="coerce").iloc[0]
-            official_final = pd.to_numeric(pd.Series([row.get(subject_sources["final"])]), errors="coerce").iloc[0]
+            existing_final = pd.to_numeric(pd.Series([row.get(subject_col)]), errors="coerce").iloc[0]
             source_values = pd.to_numeric(
                 pd.Series([row.get(subject_sources[suffix]) for suffix in ["assignments", "term1", "term2", "mock1", "mock2"]]),
                 errors="coerce",
             )
             has_source_data = source_values.notna().any()
-            if pd.isna(existing_prediction) and has_source_data:
+            if pd.isna(existing_final) and has_source_data:
                 predicted_score = predict_subject_score_ml(row, subject_col, model_bundle)["predicted_score"]
-                enriched_df.at[index, predicted_column] = round(predicted_score, 1)
-                existing_prediction = predicted_score
-            if pd.isna(existing_prediction) and pd.notna(official_final):
-                existing_prediction = official_final
-            if pd.notna(existing_prediction):
-                predicted_scores.append(float(existing_prediction))
+                enriched_df.at[index, subject_col] = round(predicted_score, 1)
+                existing_final = predicted_score
+            if pd.notna(existing_final):
+                final_scores.append(float(existing_final))
 
         math_mock1 = safe_float(row.get("Mathematics_Mock1"), np.nan)
         math_mock2 = safe_float(row.get("Mathematics_Mock2"), np.nan)
@@ -3214,8 +2878,8 @@ def populate_provisional_final_scores(student_df):
             enriched_df.at[index, "Math_Improvement"] = round(float(math_mock2 - math_mock1), 1)
         if not pd.isna(math_assignment) and not pd.isna(math_mock2):
             enriched_df.at[index, "Math_Consistency"] = round(float(math_assignment - math_mock2), 1)
-        if predicted_scores:
-            enriched_df.at[index, "Action_Zone"] = action_zone_from_average(float(np.mean(predicted_scores)))
+        if final_scores:
+            enriched_df.at[index, "Action_Zone"] = action_zone_from_average(float(np.mean(final_scores)))
 
     return enriched_df
 
@@ -3242,246 +2906,157 @@ def decode_pdf_stream_bytes(object_bytes):
     return stream_bytes
 
 
-def build_waec_line_groups(page):
-    words = page.extract_words() or []
-    line_buckets = {}
-    for word in words:
-        y_key = round(float(word.get("top", 0.0)) / 3) * 3
-        line_buckets.setdefault(y_key, []).append(word)
-
-    grouped_lines = []
-    for y_key in sorted(line_buckets):
-        ordered_words = sorted(line_buckets[y_key], key=lambda item: item.get("x0", 0.0))
-        grouped_lines.append(
-            {
-                "top": y_key,
-                "words": ordered_words,
-                "text": " ".join(word.get("text", "") for word in ordered_words).strip(),
-            }
-        )
-    return grouped_lines
-
-
-def extract_waec_school_name(pdf):
-    if not pdf.pages:
-        return ""
-
-    first_page_text = pdf.pages[0].extract_text() or ""
-    for line in [line.strip() for line in first_page_text.splitlines() if line.strip()]:
-        upper_line = line.upper()
-        if "JHS" in upper_line and not any(token in upper_line for token in ["RESULT", "WAEC", "SCHOOL #", "DATE", "HTTPS", "EXAMINATIONS COUNCIL"]):
-            return line.strip()
-    return ""
-
-
-def is_waec_noise_line(line_text):
-    upper_text = str(line_text).upper().strip()
-    if not upper_text:
-        return True
-    noise_tokens = [
-        "WAEC RESULTS LISTING",
-        "THE WEST AFRICAN EXAMINATIONS COUNCIL",
-        "THE BASIC SCHOOL CERTIFICATE RESULTS LISTING",
-        "INDEX NUMBER NAME GENDER DOB RESULTS",
-        "HTTPS://RESULTSLISTING.WAECGH.ORG/SEARCH",
-        "COMMITTED TO EXCELLENCE",
-        "SCHOOL #",
-        "DATE :",
-        "DISCLAIMER:",
-        "AT THE TIME OF RELEASE",
-        "THE FINAL RESULTS",
-        "RESULTS SHOWN IN THIS LISTING",
-    ]
-    if any(token in upper_text for token in noise_tokens):
-        return True
-    if upper_text.startswith("TOTAL NUMBER OF CANDIDATES"):
-        return True
-    if re.fullmatch(r"\d+/\d+", upper_text):
-        return True
-    return False
-
-
-def extract_waec_line_fields(line_words):
-    field_parts = {"index": [], "name": [], "gender": [], "dob": [], "results": []}
-    for word in line_words:
-        text = str(word.get("text", "")).strip()
-        if not text:
-            continue
-        x0 = float(word.get("x0", 0.0))
-        if x0 < WAEC_EXPLICIT_VERTICAL_LINES[1]:
-            field_parts["index"].append(text)
-        elif x0 < WAEC_EXPLICIT_VERTICAL_LINES[2]:
-            field_parts["name"].append(text)
-        elif x0 < WAEC_EXPLICIT_VERTICAL_LINES[3]:
-            field_parts["gender"].append(text)
-        elif x0 < WAEC_EXPLICIT_VERTICAL_LINES[4]:
-            field_parts["dob"].append(text)
-        else:
-            field_parts["results"].append(text)
-
-    return {key: " ".join(values).strip() for key, values in field_parts.items()}
-
-
-_NAME_NOISE_WORDS = {"the", "of", "at", "in", "is", "are", "for", "and", "to", "this", "that", "with", "shown", "time", "final", "release", "listing", "results", "will", "be", "certificate"}
-
-def clean_waec_name_fragment(name_fragment):
-    name_text = str(name_fragment).strip()
-    name_text = re.sub(r"[^A-Za-z0-9 ]+", " ", name_text)
-    name_text = re.sub(r"\s+", " ", name_text).strip()
-    if not name_text:
-        return ""
-    if name_text.isdigit():
-        return ""
-    words = name_text.lower().split()
-    noise_count = sum(1 for w in words if w in _NAME_NOISE_WORDS)
-    if noise_count >= 2 or (len(words) > 4 and noise_count >= 1):
-        return ""
-    return name_text
-
-
-def clean_waec_results_fragment(results_fragment):
-    results_text = str(results_fragment).strip()
-    results_text = re.sub(r"\s+", " ", results_text).strip(" ,")
-    if not results_text:
-        return ""
-    if any(token in results_text.upper() for token in ["HTTPS://", "DISCLAIMER", "TOTAL NUMBER OF CANDIDATES"]):
-        return ""
-    return results_text
-
-
 def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
+    """
+    Extract WAEC result data from PDF using pdfplumber.
+    Returns (school_name, extracted_rows) where extracted_rows is a list of dicts
+    with keys: Student_ID, Student_Name, Gender, Date_of_Birth, Official_Results_Raw
+    """
     if pdfplumber is None:
         raise ValueError("pdfplumber is not installed. Please install it to process PDF files.")
 
+    all_lines = []
+    school_candidates = []
+    header_seen = False
+
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        school_name = extract_waec_school_name(pdf) or Path(fallback_school_name).stem.replace("_", " ").strip()
-        table_lines = []
-
-        for page_number, page in enumerate(pdf.pages[1:], start=2):
-            for line_group in build_waec_line_groups(page):
-                line_text = line_group["text"]
-                if is_waec_noise_line(line_text):
-                    continue
-                line_fields = extract_waec_line_fields(line_group["words"])
-                line_fields["page_number"] = page_number
-                line_fields["full_text"] = line_text
-                table_lines.append(line_fields)
-
-    if not table_lines:
-        raise ValueError("No readable student rows were found in the uploaded WAEC PDF. Please ensure it is a digital WAEC result PDF.")
-
-    extracted_rows = []
-    current_record = None
-    pending_name_parts = []
-    pending_result_parts = []
-
-    def finalize_record(record):
-        if not record:
-            return None
-        student_name = " ".join(part for part in record.get("name_parts", []) if part).strip()
-        student_name = re.sub(r"\s+", " ", student_name).strip()
-        results_text = " ".join(part for part in record.get("results_parts", []) if part).strip()
-        results_text = re.sub(r"\s+", " ", results_text).strip(" ,")
-        return {
-            "Student_ID": str(record.get("Student_ID", "")).strip(),
-            "Student_Name": student_name,
-            "Gender": normalize_gender_token(record.get("Gender", "")),
-            "Date_of_Birth": normalize_date_of_birth(record.get("Date_of_Birth", "")),
-            "Official_Results_Raw": results_text,
-        }
-
-    for line_index, line_fields in enumerate(table_lines):
-        next_index_text = table_lines[line_index + 1]["index"] if line_index + 1 < len(table_lines) else ""
-        line_index_number = re.search(r"\b(\d{10})\b", line_fields.get("index", "") or line_fields.get("full_text", ""))
-        line_name = clean_waec_name_fragment(line_fields.get("name", ""))
-        line_gender = normalize_gender_token(line_fields.get("gender", "") or line_fields.get("full_text", ""))
-        line_dob = normalize_date_of_birth(line_fields.get("dob", "") or line_fields.get("full_text", ""))
-        line_results = clean_waec_results_fragment(line_fields.get("results", ""))
-
-        if line_index_number:
-            if current_record is not None:
-                finalized = finalize_record(current_record)
-                if finalized and finalized["Student_ID"]:
-                    extracted_rows.append(finalized)
-            current_record = {
-                "Student_ID": line_index_number.group(1),
-                "name_parts": pending_name_parts.copy(),
-                "Gender": line_gender,
-                "Date_of_Birth": line_dob,
-                "results_parts": pending_result_parts.copy() + ([line_results] if line_results else []),
-            }
-            pending_name_parts = []
-            pending_result_parts = []
-            if line_name:
-                current_record["name_parts"].append(line_name)
-            continue
-
-        if current_record is None:
-            if line_name:
-                pending_name_parts.append(line_name)
-            if line_results:
-                pending_result_parts.append(line_results)
-            continue
-
-        if line_name and not line_results and not line_gender and not line_dob:
-            if pending_result_parts or re.search(r"\b\d{10}\b", next_index_text or ""):
-                pending_name_parts.append(line_name)
+        for page in pdf.pages:
+            # Extract words with their coordinates
+            words = page.extract_words()
+            if not words:
                 continue
 
-        if line_name:
-            current_record["name_parts"].append(line_name)
-        if line_gender and not current_record.get("Gender"):
-            current_record["Gender"] = line_gender
-        if line_dob and not current_record.get("Date_of_Birth"):
-            current_record["Date_of_Birth"] = line_dob
-        if line_results:
-            is_new_block = bool(re.search(r"\bENGLISH\b", line_results.upper()))
-            if is_new_block and current_record.get("results_parts"):
-                pending_result_parts = [line_results]
-            elif pending_result_parts:
-                pending_result_parts.append(line_results)
-            else:
-                current_record["results_parts"].append(line_results)
+            # Group words by vertical position (y-coordinate) to form lines
+            lines_dict = {}
+            for word in words:
+                y = round(float(word.get("top", 0)), 0)
+                if y not in lines_dict:
+                    lines_dict[y] = []
+                lines_dict[y].append(word)
 
-    if current_record is not None:
-        finalized = finalize_record(current_record)
-        if finalized and finalized["Student_ID"]:
-            extracted_rows.append(finalized)
+            # Process each line
+            for y in sorted(lines_dict.keys()):
+                line_words = sorted(lines_dict[y], key=lambda w: w.get("x0", 0))
+                line_text = " ".join([w.get("text", "") for w in line_words]).strip()
 
-    cleaned_rows = []
-    for extracted_row in extracted_rows:
-        if not extracted_row["Student_ID"]:
-            continue
-        if not extracted_row["Student_Name"]:
-            extracted_row["Student_Name"] = extracted_row["Student_ID"]
-        cleaned_rows.append(extracted_row)
+                if not line_text:
+                    continue
 
-    if not cleaned_rows:
-        raise ValueError("EduPulse could not reconstruct any complete student records from the uploaded WAEC PDF.")
+                # Check for header line
+                upper_text = line_text.upper()
+                if "INDEX NUMBER" in upper_text and "RESULTS" in upper_text:
+                    header_seen = True
+                    continue
 
-    return school_name, cleaned_rows
+                # Collect potential school names from pre-header lines
+                if not header_seen:
+                    clean_text = re.sub(r"\s+", " ", line_text).strip()
+                    if clean_text and len(clean_text) >= 5:
+                        if not any(flag in clean_text.upper() for flag in ["RESULTS LISTING", "WAEC", "DATE", "SCHOOL", "AFRICAN EXAMINATIONS COUNCIL", "INDEX NUMBER", "RESULTS"]):
+                            school_candidates.append(clean_text)
+                    continue
+
+                # Parse student data lines after header
+                if header_seen:
+                    all_lines.append(line_text)
+
+    if not all_lines:
+        raise ValueError("No readable text was found in the uploaded WAEC PDF. Please ensure it is a digital PDF and not a scanned image.")
+
+    # Determine school name
+    school_name = school_candidates[0] if school_candidates else Path(fallback_school_name).stem.replace("_", " ").strip()
+
+    # Parse student records from lines
+    extracted_rows = []
+    current_row = None
+
+    for line_text in all_lines:
+        # Look for index number pattern (10 digits)
+        index_match = re.search(r"(\d{10})", line_text)
+
+        if index_match:
+            # Save previous row if exists
+            if current_row:
+                current_row["Official_Results_Raw"] = " ".join(current_row["Official_Results_Raw"]).strip()
+                extracted_rows.append(current_row)
+
+            # Parse the line - split by multiple spaces to identify columns
+            parts = re.split(r"\s{2,}", line_text.strip())
+            index_num = index_match.group(1)
+
+            # Extract name (typically after index, before gender/dob)
+            name = ""
+            gender = ""
+            dob = ""
+            results = ""
+
+            # Find which part contains the index number
+            for i, part in enumerate(parts):
+                if index_num in part:
+                    # Name is usually the next substantial part
+                    if i + 1 < len(parts) and len(parts[i + 1]) > 3:
+                        name = parts[i + 1].strip()
+                    break
+
+            # Look for gender (F or M)
+            gender_match = re.search(r"\b([FM])\b", line_text)
+            if gender_match:
+                gender = gender_match.group(1)
+
+            # Look for date of birth pattern (DD/MM/YYYY or similar)
+            dob_match = re.search(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", line_text)
+            if dob_match:
+                dob = dob_match.group(1)
+
+            # Results are typically after DOB or at the end
+            results_match = re.search(r"(?:[FM]\s+)?(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s+)?(.+)$", line_text)
+            if results_match:
+                results_text = results_match.group(1).strip()
+                # Exclude the index number from results
+                results = results_text.replace(index_num, "").strip()
+
+            current_row = {
+                "Student_ID": index_num,
+                "Student_Name": name,
+                "Gender": gender,
+                "Date_of_Birth": dob,
+                "Official_Results_Raw": [results] if results else [],
+            }
+        else:
+            # Continuation line - append to current row's results
+            if current_row:
+                current_row["Official_Results_Raw"].append(line_text.strip())
+
+    # Don't forget the last row
+    if current_row:
+        current_row["Official_Results_Raw"] = " ".join(current_row["Official_Results_Raw"]).strip()
+        extracted_rows.append(current_row)
+
+    # Type-Safety: Force all extracted data to strings to prevent float crashes
+    for row in extracted_rows:
+        for key in row:
+            if row[key] is not None and not isinstance(row[key], str):
+                row[key] = str(row[key])
+
+    return school_name, extracted_rows
 
 
 def normalize_waec_subject_label(subject_label):
-    label = str(subject_label).upper().replace(":", " ")
+    label = str(subject_label).upper().replace(":", "A")
     label = label.replace("EPE", "EWE")
     label = label.replace("LANG.", "LANGUAGE")
     label = label.replace("STUD.", "STUDIES")
     label = label.replace("R.M.E.", "RME")
     label = label.replace("R. M. E.", "RME")
     label = label.replace("CAREER TECH.", "CAREER TECHNOLOGY")
-    label = label.replace("C. A. & DESIGN", "CREATIVE ARTS DESIGN")
-    label = label.replace("C.A. & DESIGN", "CREATIVE ARTS DESIGN")
-    label = label.replace("C A & DESIGN", "CREATIVE ARTS DESIGN")
     label = label.replace("C.A. DESIGN", "CREATIVE ARTS DESIGN")
     label = label.replace("C. A. DESIGN", "CREATIVE ARTS DESIGN")
-    label = label.replace("&", " ")
     label = re.sub(r"[^A-Z ]+", " ", label)
     return re.sub(r"\s+", " ", label).strip()
 
 
 def map_waec_result_text_to_scores(results_text):
-    normalized_text = str(results_text).upper().replace(":", " ")
+    normalized_text = str(results_text).upper().replace(":", "A")
     normalized_text = normalized_text.replace("\t", " ")
     normalized_text = normalized_text.replace("\r", " ")
     normalized_text = normalized_text.replace("\n", " ")
@@ -3508,13 +3083,7 @@ def prepare_official_pdf_import(uploaded_bytes, uploaded_name, expected_school="
         raise ValueError("EduPulse could not determine the school name from the uploaded WAEC PDF.")
 
     school_profile_lookup = load_school_profile_lookup()
-    # Case-insensitive school lookup: PDF extracts names in all-caps, circuits CSV may vary
     school_profile = school_profile_lookup.get(resolved_school, {})
-    if not school_profile:
-        matched_key = next((k for k in school_profile_lookup if k.casefold() == resolved_school.casefold()), None)
-        if matched_key:
-            school_profile = school_profile_lookup[matched_key]
-            resolved_school = matched_key
     resolved_circuit = school_profile.get("Circuit", "")
     resolved_school_type = school_profile.get("School_Type", "Not Specified")
     if not resolved_circuit:
@@ -3523,12 +3092,10 @@ def prepare_official_pdf_import(uploaded_bytes, uploaded_name, expected_school="
     official_rows = []
     for extracted_row in extracted_rows:
         official_row = {column: pd.NA for column in EXPECTED_DATA_COLUMNS}
-        official_index_number = str(extracted_row.get("Student_ID", "")).strip()
-        official_row["Student_ID"] = official_index_number
-        official_row["Official_Index_Number"] = official_index_number
+        official_row["Student_ID"] = str(extracted_row.get("Student_ID", "")).strip()
         official_row["Student_Name"] = str(extracted_row.get("Student_Name", "")).strip()
-        official_row["Gender"] = normalize_gender_token(extracted_row.get("Gender", ""))
-        official_row["Date_of_Birth"] = normalize_date_of_birth(extracted_row.get("Date_of_Birth", ""))
+        official_row["Gender"] = str(extracted_row.get("Gender", "")).strip()
+        official_row["Date_of_Birth"] = str(extracted_row.get("Date_of_Birth", "")).strip()
         official_row["School_Name"] = resolved_school
         official_row["Circuit"] = resolved_circuit
         official_row["School_Type"] = resolved_school_type
@@ -3585,14 +3152,9 @@ def prepare_official_results_import(uploaded_df, school, school_circuit):
     for target_column, source_column in mapped_columns.items():
         official_df[target_column] = uploaded_df[source_column]
 
-    for column in ["Student_ID", "Official_Index_Number", "Student_Name", "Gender", "Date_of_Birth", "Official_Results_Raw"]:
+    for column in ["Student_ID", "Student_Name", "Gender", "Date_of_Birth", "Official_Results_Raw"]:
         if column in official_df.columns:
             official_df[column] = official_df[column].fillna("").astype(str).str.strip()
-    if "Official_Index_Number" in official_df.columns:
-        missing_official_index_mask = official_df["Official_Index_Number"].eq("") & official_df["Student_ID"].str.fullmatch(r"\d{10}", na=False)
-        official_df.loc[missing_official_index_mask, "Official_Index_Number"] = official_df.loc[missing_official_index_mask, "Student_ID"]
-    official_df["Gender"] = official_df["Gender"].apply(normalize_gender_token)
-    official_df["Date_of_Birth"] = normalize_date_of_birth_series(official_df["Date_of_Birth"])
     official_df["School_Name"] = school
     official_df["Circuit"] = school_circuit
     official_df["School_Type"] = school_type
@@ -3615,118 +3177,6 @@ def prepare_official_results_import(uploaded_df, school, school_circuit):
 
     matched_fields = sorted(mapped_columns.keys())
     return completed_df, matched_fields
-
-
-def build_match_review_row(official_row, school, circuit, source_label, reason):
-    return {
-        "review_id": f"review-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{random.randint(1000, 9999)}",
-        "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
-        "district": st.session_state.get("user_district", "") or get_scope_label(),
-        "school": school,
-        "circuit": circuit,
-        "source_label": source_label,
-        "official_index_number": str(official_row.get("Official_Index_Number") or official_row.get("Student_ID", "")).strip(),
-        "student_name": str(official_row.get("Student_Name", "")).strip(),
-        "date_of_birth": normalize_date_of_birth(official_row.get("Date_of_Birth", "")),
-        "reason": reason,
-        "status": "Pending Review",
-        "payload_json": json.dumps({column: str(official_row.get(column, "")) for column in EXPECTED_DATA_COLUMNS}),
-    }
-
-
-def merge_official_results_for_school(existing_school_df, official_df, school, school_circuit, source_label="official WAEC result upload"):
-    existing_working_df = existing_school_df.copy()
-    if existing_working_df.empty:
-        existing_working_df = pd.DataFrame(columns=EXPECTED_DATA_COLUMNS)
-    for column in EXPECTED_DATA_COLUMNS:
-        if column not in existing_working_df.columns:
-            existing_working_df[column] = pd.NA
-    existing_working_df = existing_working_df[EXPECTED_DATA_COLUMNS].copy()
-    existing_working_df["_existing_row_id"] = np.arange(len(existing_working_df))
-    existing_working_df["_used"] = False
-    existing_working_df["_match_key"] = existing_working_df.apply(
-        lambda row: build_internal_match_key(row.get("School_Name", school), row.get("Student_Name", ""), row.get("Date_of_Birth", "")),
-        axis=1,
-    )
-    existing_working_df["_official_index_key"] = existing_working_df["Official_Index_Number"].fillna("").astype(str).str.strip()
-    existing_working_df["_student_id_key"] = existing_working_df["Student_ID"].fillna("").astype(str).str.strip()
-
-    merged_rows = []
-    review_rows = []
-    matched_count = 0
-    official_only_count = 0
-
-    for _, official_row in official_df.iterrows():
-        official_index = str(official_row.get("Official_Index_Number") or official_row.get("Student_ID", "")).strip()
-        official_name = str(official_row.get("Student_Name", "")).strip()
-        official_dob = normalize_date_of_birth(official_row.get("Date_of_Birth", ""))
-        official_match_key = build_internal_match_key(school, official_name, official_dob)
-
-        matched_candidates = pd.DataFrame()
-        if official_index:
-            matched_candidates = existing_working_df[
-                ~existing_working_df["_used"]
-                & (
-                    existing_working_df["_official_index_key"].eq(official_index)
-                    | existing_working_df["_student_id_key"].eq(official_index)
-                )
-            ].copy()
-
-        if matched_candidates.empty and official_match_key:
-            matched_candidates = existing_working_df[
-                ~existing_working_df["_used"]
-                & existing_working_df["_match_key"].eq(official_match_key)
-            ].copy()
-
-        if len(matched_candidates) > 1:
-            review_rows.append(build_match_review_row(official_row, school, school_circuit, source_label, "Ambiguous strict match: multiple existing students share the same school/name/DOB signature."))
-            continue
-
-        if len(matched_candidates) == 1:
-            matched_count += 1
-            matched_index = matched_candidates.index[0]
-            existing_working_df.at[matched_index, "_used"] = True
-            merged_row = existing_working_df.loc[matched_index, EXPECTED_DATA_COLUMNS].copy()
-
-            for column in ["Student_Name", "Gender", "Date_of_Birth", "Official_Results_Raw"]:
-                official_value = str(official_row.get(column, "")).strip()
-                if official_value:
-                    merged_row[column] = official_value
-            if official_index:
-                merged_row["Student_ID"] = official_index
-                merged_row["Official_Index_Number"] = official_index
-
-            merged_row["School_Name"] = school
-            merged_row["Circuit"] = school_circuit
-            merged_row["School_Type"] = official_row.get("School_Type", merged_row.get("School_Type", MIGRATION_SCHOOL_TYPE_PLACEHOLDER))
-            if not str(merged_row.get("Internal_Tracking_ID", "")).strip():
-                merged_row["Internal_Tracking_ID"] = generate_internal_tracking_id()
-
-            for final_col in FINAL_SUBJECT_COLUMNS:
-                official_value = pd.to_numeric(pd.Series([official_row.get(final_col)]), errors="coerce").iloc[0]
-                if pd.notna(official_value):
-                    merged_row[final_col] = official_value
-
-            merged_rows.append(merged_row.to_dict())
-            continue
-
-        if not official_match_key:
-            review_rows.append(build_match_review_row(official_row, school, school_circuit, source_label, "Missing normalized name or DOB prevented strict matching."))
-            continue
-
-        official_only_count += 1
-        new_row = {column: official_row.get(column, pd.NA) for column in EXPECTED_DATA_COLUMNS}
-        new_row["Internal_Tracking_ID"] = generate_internal_tracking_id()
-        new_row["Student_ID"] = official_index or str(official_row.get("Student_ID", "")).strip()
-        new_row["Official_Index_Number"] = official_index
-        new_row["School_Name"] = school
-        new_row["Circuit"] = school_circuit
-        new_row["School_Type"] = official_row.get("School_Type", MIGRATION_SCHOOL_TYPE_PLACEHOLDER)
-        merged_rows.append(new_row)
-
-    remaining_existing_rows = existing_working_df.loc[~existing_working_df["_used"], EXPECTED_DATA_COLUMNS].copy()
-    merged_df = pd.concat([remaining_existing_rows, pd.DataFrame(merged_rows, columns=EXPECTED_DATA_COLUMNS)], ignore_index=True)
-    return merged_df, review_rows, matched_count, official_only_count
 
 
 def sync_student_upload(prepared_df, school, school_circuit, redirect_to_login=False, source_label="student CSV"):
@@ -4237,46 +3687,31 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
     template_tab, official_tab = st.tabs(["📊 Prediction Template Sync", "📄 Official WAEC Result Import"])
 
     with template_tab:
-        st.markdown("#### Step 1 — Download your school template")
-        count_col, dl_col = st.columns([1, 2])
-        with count_col:
-            num_students = st.number_input(
-                "Number of JHS 3 students",
-                min_value=1,
-                max_value=500,
-                value=st.session_state.get(f"{key_prefix}_student_count", 20),
-                step=1,
-                help="Enter your exact JHS 3 class size. The template will have exactly that many rows — one per student.",
-                key=f"{key_prefix}_student_count",
-            )
-        with dl_col:
-            st.write("")
-            st.write("")
+        left_col, right_col = st.columns([1, 1])
+        with left_col:
+            student_id_prefix = build_school_student_id_prefix(school)
+            next_number = get_next_school_student_id_number(school, student_id_prefix)
             st.download_button(
-                f"Download Template ({int(num_students)} rows)",
-                build_headteacher_student_template_bytes(school, school_circuit, school_type, num_students=int(num_students)),
+                "Download Prediction Template",
+                build_headteacher_student_template_bytes(school, school_circuit, school_type),
                 file_name=f"edupulse_{school.lower().replace(' ', '_')}_student_data_template.csv",
                 mime="text/csv",
                 key=f"{key_prefix}_download_csv",
                 use_container_width=True,
             )
-        st.caption(
-            f"The template has {int(num_students)} blank rows ready to fill. School, circuit, and school type are added automatically on upload — you only need to fill in Student_Name, Gender, Date_of_Birth, Attendance_Percent, and subject assessment scores. Student IDs are also assigned automatically when you sync."
-        )
+            st.caption(
+                f"The template is prefilled with School_Name = {school}, Circuit = {school_circuit or 'Not mapped yet'}, School_Type = {school_type}, and Student_ID values starting from {student_id_prefix}-{next_number:04d}. Final BECE columns are intentionally omitted because EduPulse predicts them automatically from the uploaded school assessments."
+            )
 
-        st.markdown("#### Step 2 — Upload your completed template")
-        left_col, right_col = st.columns([1, 1])
-        with left_col:
+        with right_col:
             uploaded_file = st.file_uploader(
                 "Upload completed prediction template",
                 type=["csv"],
                 key=f"{key_prefix}_upload",
             )
-        with right_col:
-            pass
 
         with st.expander("Preview the required prediction-template columns"):
-            st.dataframe(pd.DataFrame({"Required Columns": HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS}), use_container_width=True, height=320)
+            st.dataframe(pd.DataFrame({"Required Columns": PREDICTION_TEMPLATE_COLUMNS}), use_container_width=True, height=320)
 
         if uploaded_file is not None:
             try:
@@ -5679,90 +5114,7 @@ def render_director_dashboard(df, subject_cols):
         st.write("#### Circuit Ranking by Manual Category Predictions")
         st.dataframe(circuit_prediction_rank, use_container_width=True)
 
-    st.markdown("---")
-    render_prediction_vs_actual(df, subject_cols, scope_label=scope_label)
     render_scroll_to_top()
-
-
-def render_prediction_vs_actual(df, subject_cols, scope_label=""):
-    """Show side-by-side predicted vs actual BECE results for students who have both."""
-    st.markdown("### 📊 Predicted vs Actual BECE Results")
-
-    if df.empty:
-        st.info("No student data available for comparison.")
-        return
-
-    predicted_cols = [c for c in PREDICTED_SUBJECT_COLUMNS if c in df.columns]
-    final_cols = [c for c in FINAL_SUBJECT_COLUMNS if c in df.columns]
-
-    if not final_cols:
-        st.info("Official BECE results have not been synced yet. Upload the WAEC PDF to enable this comparison.")
-        return
-
-    # Only show students with at least one official result
-    has_official = df[final_cols].apply(pd.to_numeric, errors="coerce").notna().any(axis=1)
-    matched_df = df[has_official].copy()
-
-    if matched_df.empty:
-        st.info("No students have official WAEC results synced yet. This table will populate after the WAEC PDF is uploaded.")
-        return
-
-    subject_display = {
-        "Mathematics": "Maths",
-        "English_Language": "English",
-        "Integrated_Science": "Science",
-        "Social_Studies": "Social",
-        "ICT": "ICT",
-        "RME": "RME",
-        "BDT": "BDT",
-        "French": "CA Design",
-        "Ewe": "Ewe",
-    }
-
-    # Build comparison rows
-    comparison_rows = []
-    for _, row in matched_df.iterrows():
-        record = {
-            "Student_Name": str(row.get("Student_Name", "")).strip(),
-            "Gender": str(row.get("Gender", "")).strip(),
-            "School_Name": str(row.get("School_Name", "")).strip(),
-        }
-        pred_scores = []
-        actual_scores = []
-        for prefix in SUBJECT_PREFIXES:
-            pred_col = f"{prefix}{PREDICTED_SUFFIX}"
-            final_col = f"{prefix}{FINAL_SUFFIX}"
-            short = subject_display.get(prefix, prefix)
-            pred_val = pd.to_numeric(pd.Series([row.get(pred_col)]), errors="coerce").iloc[0]
-            actual_val = pd.to_numeric(pd.Series([row.get(final_col)]), errors="coerce").iloc[0]
-            if pd.notna(actual_val):
-                record[f"{short} (Pred)"] = round(float(pred_val), 1) if pd.notna(pred_val) else "—"
-                record[f"{short} (Actual)"] = round(float(actual_val), 1)
-                if pd.notna(pred_val):
-                    record[f"{short} (Δ)"] = round(float(actual_val - pred_val), 1)
-                pred_scores.append(pred_val if pd.notna(pred_val) else actual_val)
-                actual_scores.append(actual_val)
-        if actual_scores:
-            record["Actual Avg"] = round(float(np.mean(actual_scores)), 1)
-            record["Predicted Avg"] = round(float(np.mean([s for s in pred_scores if pd.notna(s)])), 1) if any(pd.notna(s) for s in pred_scores) else "—"
-        comparison_rows.append(record)
-
-    if not comparison_rows:
-        st.info("No matched records found for comparison.")
-        return
-
-    comparison_df = pd.DataFrame(comparison_rows)
-    st.caption(f"**{len(comparison_df)}** student(s) with official WAEC results synced{f' — {scope_label}' if scope_label else ''}.")
-    st.dataframe(comparison_df, use_container_width=True)
-
-    csv_bytes = comparison_df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "⬇️ Download Comparison CSV",
-        csv_bytes,
-        file_name=f"predicted_vs_actual{'_' + scope_label.replace(' ', '_') if scope_label else ''}.csv",
-        mime="text/csv",
-        key=f"dl_pred_vs_actual_{scope_label}",
-    )
 
 
 def render_audit_table(display_df, key_prefix, filename):
@@ -5952,9 +5304,6 @@ def render_school_dashboard(school_df, subject_cols):
     )
     st.markdown("#### 🏅 Best 6 Aggregate Ranking")
     st.dataframe(summary_table, use_container_width=True)
-
-    st.markdown("---")
-    render_prediction_vs_actual(school_df, subject_cols, scope_label=school_name)
     render_scroll_to_top()
 
 
