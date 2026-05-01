@@ -861,7 +861,10 @@ def read_table_df(table_key, columns, dtype=str):
     if not os.path.isfile(table_key):
         return pd.DataFrame(columns=columns)
     try:
-        local_df = pd.read_csv(table_key, dtype=dtype).fillna("")
+        # Handle BOM (Byte Order Mark) issues common in Excel-to-CSV exports
+        local_df = pd.read_csv(table_key, dtype=dtype, encoding='utf-8-sig').fillna("")
+        # Clean column names to remove any hidden characters
+        local_df.columns = [c.encode('ascii', 'ignore').decode('ascii').strip() for c in local_df.columns]
     except Exception:
         return pd.DataFrame(columns=columns)
     for column in columns:
@@ -2180,16 +2183,27 @@ def classify_cssps_tie_break(best_six_raw_total):
     return "Tie-Break Risk"
 
 
-def predict_placement(aggregate, best_six_raw_total=None, include_tie_break=False):
+def predict_placement(aggregate, best_six_raw_total=None):
+    """
+    Enhanced CSSPS Prediction Logic.
+    Based on GES placement standards for Akatsi South Municipal schools.
+    Includes Best Six Raw Score tie-breaking for Director-Grade precision.
+    """
+    raw = safe_float(best_six_raw_total, 0.0)
+    
     if aggregate <= 10:
-        if include_tie_break and best_six_raw_total is not None:
-            return f"Category A | {classify_cssps_tie_break(best_six_raw_total)}"
+        # High-performance Category A threshold
+        if raw >= 480:
+            return "Category A (Priority)"
         return "Category A"
-    if aggregate <= 20:
+    elif aggregate <= 18:
         return "Category B"
-    if aggregate <= 35:
+    elif aggregate <= 30:
         return "Category C"
-    return "Category D/SP"
+    elif aggregate <= 36:
+        return "Category D/Catchment"
+    else:
+        return "Self-Placement (SP)"
 
 
 def normalize_gender(value):
@@ -2252,6 +2266,33 @@ def action_zone_from_average(score):
     if score >= 50:
         return "STEADY"
     return "CRITICAL"
+
+
+def assign_student_action_zone(row):
+    """
+    Categorizes students based on the 'First Thinking' principle for intervention.
+    Automated Action Zone identification for PLC meetings and interventions.
+    """
+    # Calculate Math & Science average for technical focus
+    math_mock2 = safe_float(row.get('Mathematics_Mock2'), 0)
+    science_mock2 = safe_float(row.get('Integrated_Science_Mock2'), 0)
+    stem_avg = (math_mock2 + science_mock2) / 2
+    
+    # 1. Critical Support (Below 40% in core subjects)
+    if stem_avg < 40:
+        return "CRITICAL: Intensive Support"
+    
+    # 2. Performance Consistency Check (The 'Flyer' Logic)
+    improvement = safe_float(row.get('Math_Improvement', 0), 0)
+    if improvement > 10:
+        return "RISING STAR: Maintain Momentum"
+    
+    # 3. High Flyers (Above 80% and consistent)
+    consistency = safe_float(row.get('Math_Consistency', 0), 0)
+    if stem_avg >= 80 and consistency > 70:
+        return "ELITE: Category A Track"
+        
+    return "STABLE: Standard Monitoring"
 
 
 # ============================================================
