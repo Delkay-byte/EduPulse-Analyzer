@@ -3355,115 +3355,148 @@ def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         school_name = extract_waec_school_name(pdf) or Path(fallback_school_name).stem.replace("_", " ").strip()
-        table_lines = []
+        
+        # Extract ALL text from PDF as one continuous string
+        full_text = ""
+        for page in pdf.pages:
+            page_text = page.extract_text() or ""
+            full_text += "\n" + page_text
 
-        for page_number, page in enumerate(pdf.pages[1:], start=2):
-            for line_group in build_waec_line_groups(page):
-                line_text = line_group["text"]
-                if is_waec_noise_line(line_text):
-                    continue
-                line_fields = extract_waec_line_fields(line_group["words"])
-                line_fields["page_number"] = page_number
-                line_fields["full_text"] = line_text
-                table_lines.append(line_fields)
+    if not full_text.strip():
+        raise ValueError("No readable text found in the uploaded WAEC PDF. Please ensure it is a digital WAEC result PDF.")
 
-    if not table_lines:
-        raise ValueError("No readable student rows were found in the uploaded WAEC PDF. Please ensure it is a digital WAEC result PDF.")
+    # Clean up noise patterns (page headers, footers, timestamps, URLs)
+    noise_patterns = [
+        r"Total Number of Candidates:.*",
+        r"https?://resultslisting\.waecgh\.org/search.*",
+        r"https?://resultslisting\.waecgh\.org.*",
+        r"\d{1,2}/\d{1,2}/\d{2,4},?\s*\d{1,2}:\d{2}\s*(AM|PM).*",
+        r"WAEC Results Listing",
+        r"INDEX NUMBER\s+NAME\s+GENDER\s+DOB\s+RESULTS",
+        r"Page \d+ of \d+",
+        r"\d{1,2}/\d{1,2}/\d{2}\s*,?\s*\d{1,2}:\d{2}\s*PM",
+    ]
+    
+    clean_text = full_text
+    for pattern in noise_patterns:
+        clean_text = re.sub(pattern, "", clean_text, flags=re.IGNORECASE)
+    
+    # Normalize whitespace
+    clean_text = re.sub(r"\s+", " ", clean_text)
+    
+    # Split by 10-digit index numbers (BECE index numbers start with 07)
+    # Use regex to split while keeping the index numbers
+    student_blocks = re.split(r'(\b07\d{8}\b)', clean_text)
+    
+    extracted_rows = []
+    
+    # The split creates: [junk_before, index1, data1, index2, data2, ...]
+    # Skip first element if it's empty or junk
+    start_idx = 1 if len(student_blocks) > 1 and re.match(r'\b07\d{8}\b', student_blocks[1]) else 0
+    
+    for i in range(start_idx, len(student_blocks) - 1, 2):
+        index_number = student_blocks[i].strip()
+        raw_data = student_blocks[i + 1].strip() if i + 1 < len(student_blocks) else ""
+        
+        if not index_number or len(index_number) != 10:
+            continue
+            
+        # Extract name, gender, DOB from the block
+        # Pattern: Name (all caps, possibly with spaces) + Gender (Male/Female) + DOB (dd/mm/yyyy)
+        meta_match = re.search(r"([A-Z][A-Z\s]+?)\s+(Male|Female)\s+(\d{2}/\d{2}/\d{4})", raw_data)
+        
+        if meta_match:
+            name = meta_match.group(1).strip()
+            gender = meta_match.group(2).strip()
+            dob = meta_match.group(3).strip()
+            
+            # Clean up name - fix concatenated names by adding spaces between words
+            # Names like "AMADAHSETH" should become "AMADAH SETH"
+            name = re.sub(r'([A-Z][a-z]+)([A-Z])', r'\1 \2', name)  # Add space between camelCase-like
+            name = re.sub(r'\s+', ' ', name).strip()
+            
+            # Extract results - everything after the DOB or after "RESULTS"
+            results_part = raw_data
+            if "RESULTS" in raw_data:
+                results_part = raw_data.split("RESULTS")[-1]
+            elif meta_match:
+                # Get text after the matched metadata
+                match_end = meta_match.end()
+                results_part = raw_data[match_end:]
+            
+            # Clean up results text
+            results_part = re.sub(r"\s+", " ", results_part).strip(" ,")
+            
+            extracted_rows.append({
+                "Student_ID": index_number,
+                "Student_Name": name,
+                "Gender": normalize_gender_token(gender),
+                "Date_of_Birth": normalize_date_of_birth(dob),
+                "Official_Results_Raw": results_part,
+            })
+    
+    # Fallback: if no records found with strict pattern, try line-by-line
+    if not extracted_rows:
+        return _extract_waec_pdf_rows_fallback(clean_text, school_name)
 
+    return school_name, extracted_rows
+
+
+def _extract_waec_pdf_rows_fallback(clean_text, school_name):
+    """Fallback extraction when regex splitting fails."""
+    lines = clean_text.split("\n")
     extracted_rows = []
     current_record = None
-
-    def finalize_record(record):
-        if not record:
-            return None
-        student_name = " ".join(part for part in record.get("name_parts", []) if part).strip()
-        student_name = re.sub(r"\s+", " ", student_name).strip()
-        student_name = clean_waec_name_fragment(student_name)  # Final cleanup
-        results_text = " ".join(part for part in record.get("results_parts", []) if part).strip()
-        results_text = re.sub(r"\s+", " ", results_text).strip(" ,")
-        return {
-            "Student_ID": str(record.get("Student_ID", "")).strip(),
-            "Student_Name": student_name,
-            "Gender": normalize_gender_token(record.get("Gender", "")),
-            "Date_of_Birth": normalize_date_of_birth(record.get("Date_of_Birth", "")),
-            "Official_Results_Raw": results_text,
-        }
-
-    def extract_index_number(text):
-        """Extract 10-digit index number from text."""
-        if not text:
-            return None
-        match = re.search(r"\b(\d{10})\b", str(text))
-        return match.group(1) if match else None
-
-    for line_index, line_fields in enumerate(table_lines):
-        # Check if this line starts a NEW candidate (has 10-digit index number)
-        index_from_index_col = extract_index_number(line_fields.get("index", ""))
-        index_from_full_text = extract_index_number(line_fields.get("full_text", ""))
-        line_index_number = index_from_index_col or index_from_full_text
-
-        # Extract other fields
-        line_name = clean_waec_name_fragment(line_fields.get("name", ""))
-        line_gender = normalize_gender_token(line_fields.get("gender", "") or line_fields.get("full_text", ""))
-        line_dob = normalize_date_of_birth(line_fields.get("dob", "") or line_fields.get("full_text", ""))
-        line_results = clean_waec_results_fragment(line_fields.get("results", ""))
-
-        if line_index_number:
-            # This line has an index number = NEW CANDIDATE
-            # First, finalize and save the previous candidate if exists
-            if current_record is not None:
-                finalized = finalize_record(current_record)
-                if finalized and finalized["Student_ID"]:
-                    extracted_rows.append(finalized)
-
-            # Start a fresh candidate record
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Check for index number
+        index_match = re.search(r'\b(07\d{8})\b', line)
+        
+        if index_match:
+            # Save previous record
+            if current_record and current_record.get("Student_ID"):
+                extracted_rows.append(current_record)
+            
+            # Start new record
             current_record = {
-                "Student_ID": line_index_number,
-                "name_parts": [],
-                "Gender": line_gender,
-                "Date_of_Birth": line_dob,
-                "results_parts": [],
+                "Student_ID": index_match.group(1),
+                "Student_Name": "",
+                "Gender": "",
+                "Date_of_Birth": "",
+                "Official_Results_Raw": "",
             }
-            # Add name and results from this first line
-            if line_name:
-                current_record["name_parts"].append(line_name)
-            if line_results:
-                current_record["results_parts"].append(line_results)
-            continue
-
-        # No index number on this line = OVERFLOW content for current candidate
-        if current_record is None:
-            # No active candidate yet, skip orphan content
-            continue
-
-        # Append overflow content to current candidate
-        if line_name:
-            current_record["name_parts"].append(line_name)
-        if line_gender and not current_record.get("Gender"):
-            current_record["Gender"] = line_gender
-        if line_dob and not current_record.get("Date_of_Birth"):
-            current_record["Date_of_Birth"] = line_dob
-        if line_results:
-            current_record["results_parts"].append(line_results)
-
-    # Don't forget the last candidate!
-    if current_record is not None:
-        finalized = finalize_record(current_record)
-        if finalized and finalized["Student_ID"]:
-            extracted_rows.append(finalized)
-
-    cleaned_rows = []
-    for extracted_row in extracted_rows:
-        if not extracted_row["Student_ID"]:
-            continue
-        if not extracted_row["Student_Name"]:
-            extracted_row["Student_Name"] = extracted_row["Student_ID"]
-        cleaned_rows.append(extracted_row)
-
-    if not cleaned_rows:
-        raise ValueError("EduPulse could not reconstruct any complete student records from the uploaded WAEC PDF.")
-
-    return school_name, cleaned_rows
+            
+            # Try to extract other fields from this line
+            rest = line[index_match.end():]
+            
+            # Gender
+            gender_match = re.search(r'(Male|Female)', rest, re.IGNORECASE)
+            if gender_match:
+                current_record["Gender"] = gender_match.group(1)
+            
+            # DOB
+            dob_match = re.search(r'(\d{2}/\d{2}/\d{4})', rest)
+            if dob_match:
+                current_record["Date_of_Birth"] = dob_match.group(1)
+            
+            # Results - look for subject-grade pattern
+            results_match = re.search(r'((?:[A-Z\.\s&]+-\s*\d+\s*,?\s*)+)', rest)
+            if results_match:
+                current_record["Official_Results_Raw"] = results_match.group(1).strip()
+                
+        elif current_record:
+            # Append to current record's results
+            current_record["Official_Results_Raw"] += " " + line
+    
+    # Don't forget last record
+    if current_record and current_record.get("Student_ID"):
+        extracted_rows.append(current_record)
+    
+    return school_name, extracted_rows
 
 
 def normalize_waec_subject_label(subject_label):
