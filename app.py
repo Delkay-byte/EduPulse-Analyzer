@@ -2559,7 +2559,7 @@ def compute_student_outcome_details(row, subject_cols, score_override=None, data
         "raw_average": round(float(raw_average), 1),
         "subject_details": subject_details,
         "placement": predict_placement(aggregate),
-        "placement_outlook": predict_placement(aggregate, best_six_raw_total=best_six_raw_total, include_tie_break=True),
+        "placement_outlook": predict_placement(aggregate, best_six_raw_total=best_six_raw_total),
         "tie_break_band": classify_cssps_tie_break(best_six_raw_total) if aggregate <= 10 else "",
     }
 
@@ -6456,7 +6456,7 @@ def render_manual_grade_predictor(school):
 
         aggregate = math_grade + english_grade + science_grade + social_grade + elective_one + elective_two
         best_six_raw_total = sum(grade_to_score(grade) for grade in [math_grade, english_grade, science_grade, social_grade, elective_one, elective_two])
-        placement = predict_placement(aggregate, best_six_raw_total=best_six_raw_total, include_tie_break=True)
+        placement = predict_placement(aggregate, best_six_raw_total=best_six_raw_total)
         placement_category = predict_placement(aggregate)
 
         metric_cols = st.columns(3)
