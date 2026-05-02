@@ -173,7 +173,9 @@ SUBJECT_DISPLAY_NAMES = {
     "ICT": "Computing",
     "RME": "R.M.E.",
     "BDT": "Career Technology",
-    "French": "Creative Arts Design",
+    "Creative_Arts": "C. A. & Design",
+    "French": "French",
+    "Arabic": "Arabic",
     "Ewe": "Ewe",
 }
 MODEL_KEY_OVERRIDES = {
@@ -184,6 +186,7 @@ MODEL_KEY_OVERRIDES = {
 WAEC_RESULT_SUBJECT_MAP = {
     "ENGLISH LANGUAGE": "English_Language_Final_BECE",
     "ENGLISH LANG": "English_Language_Final_BECE",
+    "ENGLISH LANG.": "English_Language_Final_BECE",
     "ENGLISH": "English_Language_Final_BECE",
     "MATHEMATICS": "Mathematics_Final_BECE",
     "MATHS": "Mathematics_Final_BECE",
@@ -192,9 +195,11 @@ WAEC_RESULT_SUBJECT_MAP = {
     "INTEGRATED SCIENCE": "Integrated_Science_Final_BECE",
     "SOCIAL STUDIES": "Social_Studies_Final_BECE",
     "SOCIAL STUD": "Social_Studies_Final_BECE",
+    "SOCIAL STUD.": "Social_Studies_Final_BECE",
     "SOCIAL": "Social_Studies_Final_BECE",
     "RME": "RME_Final_BECE",
     "R.M.E": "RME_Final_BECE",
+    "R.M.E.": "RME_Final_BECE",
     "REL. & MORAL EDUC.": "RME_Final_BECE",
     "RELIGIOUS AND MORAL EDUCATION": "RME_Final_BECE",
     "EWE": "Ewe_Final_BECE",
@@ -204,13 +209,15 @@ WAEC_RESULT_SUBJECT_MAP = {
     "CAREER TECH.": "BDT_Final_BECE",
     "BDT": "BDT_Final_BECE",
     "BASIC DESIGN AND TECHNOLOGY": "BDT_Final_BECE",
-    "CREATIVE ARTS DESIGN": "French_Final_BECE",
-    "CREATIVE ARTS & DES.": "French_Final_BECE",
-    "CREATIVE ARTS & DESIGN": "French_Final_BECE",
-    "C. A. & DESIGN": "French_Final_BECE",
-    "CA DESIGN": "French_Final_BECE",
-    "C A DESIGN": "French_Final_BECE",
+    "CREATIVE ARTS DESIGN": "Creative_Arts_Final_BECE",
+    "CREATIVE ARTS & DES.": "Creative_Arts_Final_BECE",
+    "CREATIVE ARTS & DESIGN": "Creative_Arts_Final_BECE",
+    "C. A. & DESIGN": "Creative_Arts_Final_BECE",
+    "CA DESIGN": "Creative_Arts_Final_BECE",
+    "C A DESIGN": "Creative_Arts_Final_BECE",
+    "C.A. DESIGN": "Creative_Arts_Final_BECE",
     "FRENCH": "French_Final_BECE",
+    "ARABIC": "Arabic_Final_BECE",
     "COMPUTING": "ICT_Final_BECE",
     "ICT": "ICT_Final_BECE",
     "INFORMATION AND COMMUNICATION TECHNOLOGY": "ICT_Final_BECE",
@@ -233,7 +240,9 @@ SUBJECT_IMPORT_ALIASES = {
     "ICT_Final_BECE": ["ict", "information and communication technology", "ict score"],
     "RME_Final_BECE": ["rme", "religious and moral education", "rme score"],
     "BDT_Final_BECE": ["bdt", "basic design and technology", "bdt score"],
+    "Creative_Arts_Final_BECE": ["creative arts design", "c.a. design", "c. a. & design", "creative arts"],
     "French_Final_BECE": ["french", "french score"],
+    "Arabic_Final_BECE": ["arabic", "arabic score"],
     "Ewe_Final_BECE": ["ewe", "ewe score"],
 }
 SUBJECT_PREFIXES = [
@@ -244,7 +253,9 @@ SUBJECT_PREFIXES = [
     "ICT",
     "RME",
     "BDT",
+    "Creative_Arts",
     "French",
+    "Arabic",
     "Ewe",
 ]
 FINAL_SUBJECT_COLUMNS = [f"{prefix}{FINAL_SUFFIX}" for prefix in SUBJECT_PREFIXES]
@@ -3778,18 +3789,21 @@ def _extract_waec_pdf_rows_fallback_v2(clean_text, school_name):
 
 
 def normalize_waec_subject_label(subject_label):
-    label = str(subject_label).upper().replace(":", " ")
+    label = str(subject_label).upper().strip()
+    # Handle Creative Arts variants BEFORE stripping special chars
+    # to preserve the distinction between C.A.&Design and French
+    for ca_variant in ["C. A. & DESIGN", "C.A. & DESIGN", "C A & DESIGN",
+                       "C.A. DESIGN", "C. A. DESIGN", "CREATIVE ARTS & DESIGN",
+                       "CREATIVE ARTS & DES.", "CA DESIGN", "C A DESIGN"]:
+        if ca_variant in label:
+            return "CREATIVE ARTS DESIGN"
+    label = label.replace(":", " ")
     label = label.replace("EPE", "EWE")
     label = label.replace("LANG.", "LANGUAGE")
     label = label.replace("STUD.", "STUDIES")
     label = label.replace("R.M.E.", "RME")
     label = label.replace("R. M. E.", "RME")
     label = label.replace("CAREER TECH.", "CAREER TECHNOLOGY")
-    label = label.replace("C. A. & DESIGN", "CREATIVE ARTS DESIGN")
-    label = label.replace("C.A. & DESIGN", "CREATIVE ARTS DESIGN")
-    label = label.replace("C A & DESIGN", "CREATIVE ARTS DESIGN")
-    label = label.replace("C.A. DESIGN", "CREATIVE ARTS DESIGN")
-    label = label.replace("C. A. DESIGN", "CREATIVE ARTS DESIGN")
     label = label.replace("&", " ")
     label = re.sub(r"[^A-Z ]+", " ", label)
     return re.sub(r"\s+", " ", label).strip()
