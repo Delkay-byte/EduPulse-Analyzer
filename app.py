@@ -3282,8 +3282,19 @@ def render_metric_card(label, value, delta=None, delta_color="normal", help_text
 # ============================================================
 def read_uploaded_csv(uploaded_file, dtype=None):
     uploaded_bytes = uploaded_file.getvalue()
-    # Skip comment lines (starting with #) that contain protection warnings
-    uploaded_df = pd.read_csv(io.BytesIO(uploaded_bytes), dtype=dtype, comment='#')
+    name = getattr(uploaded_file, "name", "") or ""
+    if name.lower().endswith(".xlsx") or name.lower().endswith(".xls"):
+        # Excel upload — skip the first two rows if they contain a merged heading
+        try:
+            uploaded_df = pd.read_excel(io.BytesIO(uploaded_bytes), dtype=dtype, header=0)
+            # If the first column value looks like a heading (non-column-name string), skip it
+            first_val = str(uploaded_df.columns[0]).strip().upper()
+            if first_val not in [str(c).strip().upper() for c in EXPECTED_CIRCUIT_COLUMNS + HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS]:
+                uploaded_df = pd.read_excel(io.BytesIO(uploaded_bytes), dtype=dtype, header=2)
+        except Exception:
+            uploaded_df = pd.read_excel(io.BytesIO(uploaded_bytes), dtype=dtype)
+    else:
+        uploaded_df = pd.read_csv(io.BytesIO(uploaded_bytes), dtype=dtype, comment='#')
     uploaded_df = clean_uploaded_dataframe(uploaded_df)
     return uploaded_bytes, uploaded_df
 
@@ -4623,8 +4634,8 @@ def render_circuit_setup(title, description, key_prefix, redirect_to_login=False
 
     with right_col:
         uploaded_file = st.file_uploader(
-            "Upload completed circuits CSV",
-            type=["csv"],
+            "Upload completed circuits file (Excel or CSV)",
+            type=["xlsx", "csv"],
             key=f"{key_prefix}_upload",
         )
 
@@ -4638,7 +4649,7 @@ def render_circuit_setup(title, description, key_prefix, redirect_to_login=False
     try:
         _, uploaded_df = read_uploaded_csv(uploaded_file, dtype=str)
     except Exception as exc:
-        st.error(f"The uploaded circuits CSV could not be read: {exc}")
+        st.error(f"The uploaded circuits file could not be read: {exc}")
         render_scroll_to_top()
         return
 
@@ -4767,8 +4778,8 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
         left_col, right_col = st.columns([1, 1])
         with left_col:
             uploaded_file = st.file_uploader(
-                "Upload completed prediction template",
-                type=["csv"],
+                "Upload completed prediction template (Excel or CSV)",
+                type=["xlsx", "csv"],
                 key=f"{key_prefix}_upload",
             )
         with right_col:
