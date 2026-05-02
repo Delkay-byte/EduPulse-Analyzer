@@ -3088,83 +3088,100 @@ def login_ui():
     elif choice == "Register Director":
         st.title("📋 Director Registration")
         st.write(
-            "Create the Director account for a new district or municipality. Each Director registration now requires a one-time BloomCore access code from the platform owner, and that code expires immediately after use."
+            "Create the Director account for a new district or municipality. Each Director registration requires a one-time BloomCore access code from the platform owner. That code is burned immediately after verification — it cannot be reused."
         )
-
-        if active_config["director_registration_key"]:
-            st.info(
-                f"Active Director access code: {active_config['director_registration_key']}"
-                + (f" | Generated: {active_config['director_registration_key_created_at']}" if active_config['director_registration_key_created_at'] else "")
-            )
-        else:
-            st.warning("No unused Director access code is currently active. Generate one before the next district can register.")
 
         if active_config["district_name"]:
             st.info(
                 f"Current active deployment: {active_config['district_name']} | Headteacher key: {active_config['headteacher_security_key']}"
             )
 
-        with st.form("director_registration_form"):
-            director_access_code = st.text_input("BloomCore Director Access Code", type="password")
-            district_name = st.text_input("District/Municipal Name")
-            username = st.text_input("Director Username")
-            email = st.text_input("Email Address (for password recovery)")
-            password = st.text_input("Password", type="password", key="dir_reg_password")
-            confirm_password = st.text_input("Confirm Password", type="password", key="dir_reg_confirm_password")
-
-            st.markdown("---")
-            st.write("🔐 **Security Question (for password recovery)**")
-            security_question = st.selectbox("Select a security question", SECURITY_QUESTION_OPTIONS)
-            security_answer = st.text_input("Your Answer (remember this for password recovery)", type="password")
-
-            # Real-time password indicators (displayed inside form but update on each interaction)
-            password = st.session_state.get("dir_reg_password", "")
-            confirm_password = st.session_state.get("dir_reg_confirm_password", "")
-            if password:
-                render_password_strength_indicator(password)
-            if confirm_password:
-                render_password_match_indicator(password, confirm_password)
-
-            submitted = st.form_submit_button("Create Director Account")
-            if submitted:
-                is_strong, _ = validate_password_strength(password)
-                if not director_registration_key_is_valid(director_access_code):
-                    st.error("The Director access code is invalid or has already been used.")
-                elif not is_strong:
-                    st.error("Password does not meet security requirements. Please check the requirements above and try again.")
-                elif password != confirm_password:
-                    st.error("Passwords do not match.")
-                elif not security_answer.strip():
-                    st.error("Security answer is required for password recovery.")
+        # ── PHASE 1: Key Verification Gate ────────────────────────────────────
+        if not st.session_state.get("dir_reg_key_verified", False):
+            st.info("Enter your unique one-time Authorization Code to unlock the registration form.")
+            auth_code = st.text_input(
+                "Authorization Code",
+                type="password",
+                help="This code is for one-time use only. It will be burned immediately after verification.",
+                key="dir_reg_auth_code_input",
+            )
+            if st.button("🔓 Verify & Unlock", key="dir_reg_verify_btn"):
+                entered = str(auth_code).strip()
+                # Accept both the JSON-vault keys and the legacy app_config key
+                if validate_and_burn_director_key(entered) or director_registration_key_is_valid(entered):
+                    st.session_state["dir_reg_key_verified"] = True
+                    st.session_state["dir_reg_burned_key"] = entered
+                    st.success("✅ Identity verified! The registration form is now open.")
+                    st.rerun()
                 else:
-                    security_key = generate_security_key(district_name)
-                    try:
-                        result = register_user(
-                            username,
-                            password,
-                            "Director",
-                            "ALL",
-                            district=district_name,
-                            security_key=security_key,
-                            email=email,
-                            security_question=security_question,
-                            security_answer=security_answer,
-                        )
-                        consume_director_registration_key()
-                        activate_director_context(result["username"], result["district"], result["security_key"])
-                        initialize_empty_circuit_dataset()
-                        initialize_empty_student_dataset()
-                        st.session_state["latest_director_key"] = result["security_key"]
-                        st.session_state["latest_registered_district"] = result["district"]
-                        st.session_state["auth_nav"] = "Login"
-                        st.session_state["pending_setup_role"] = "Director"
-                        st.session_state["auth_flash_message"] = (
-                            f"Director account created for {result['district']}. Headteacher security key: {result['security_key']}"
-                        )
-                        st.session_state["auth_flash_severity"] = "success"
-                        st.rerun()
-                    except ValueError as exc:
-                        st.error(str(exc))
+                    st.error("❌ Invalid or already-used code. Please contact BloomCore Support.")
+
+        # ── PHASE 2: Registration Form (only after key is verified) ───────────
+        else:
+            st.success("✅ Authorization code accepted. Complete your Director profile below.")
+            st.divider()
+            st.markdown("### Complete Your Profile")
+
+            with st.form("director_registration_form"):
+                district_name = st.text_input("District/Municipal Name")
+                username = st.text_input("Director Username")
+                email = st.text_input("Email Address (for password recovery)")
+                password = st.text_input("Password", type="password", key="dir_reg_password")
+                confirm_password = st.text_input("Confirm Password", type="password", key="dir_reg_confirm_password")
+
+                st.markdown("---")
+                st.write("🔐 **Security Question (for password recovery)**")
+                security_question = st.selectbox("Select a security question", SECURITY_QUESTION_OPTIONS)
+                security_answer = st.text_input("Your Answer (remember this for password recovery)", type="password")
+
+                password_val = st.session_state.get("dir_reg_password", "")
+                confirm_val = st.session_state.get("dir_reg_confirm_password", "")
+                if password_val:
+                    render_password_strength_indicator(password_val)
+                if confirm_val:
+                    render_password_match_indicator(password_val, confirm_val)
+
+                submitted = st.form_submit_button("🏛️ Finalize Director Registration")
+                if submitted:
+                    is_strong, _ = validate_password_strength(password_val)
+                    if not is_strong:
+                        st.error("Password does not meet security requirements. Please check the requirements above.")
+                    elif password_val != confirm_val:
+                        st.error("Passwords do not match.")
+                    elif not security_answer.strip():
+                        st.error("Security answer is required for password recovery.")
+                    else:
+                        security_key = generate_security_key(district_name)
+                        try:
+                            result = register_user(
+                                username,
+                                password_val,
+                                "Director",
+                                "ALL",
+                                district=district_name,
+                                security_key=security_key,
+                                email=email,
+                                security_question=security_question,
+                                security_answer=security_answer,
+                            )
+                            # Burn the legacy app_config key too if it was used
+                            consume_director_registration_key()
+                            activate_director_context(result["username"], result["district"], result["security_key"])
+                            initialize_empty_circuit_dataset()
+                            initialize_empty_student_dataset()
+                            st.session_state["dir_reg_key_verified"] = False
+                            st.session_state["dir_reg_burned_key"] = ""
+                            st.session_state["latest_director_key"] = result["security_key"]
+                            st.session_state["latest_registered_district"] = result["district"]
+                            st.session_state["auth_nav"] = "Login"
+                            st.session_state["pending_setup_role"] = "Director"
+                            st.session_state["auth_flash_message"] = (
+                                f"Director account created for {result['district']}. Headteacher security key: {result['security_key']}"
+                            )
+                            st.session_state["auth_flash_severity"] = "success"
+                            st.rerun()
+                        except ValueError as exc:
+                            st.error(str(exc))
 
     else:
         st.title("📝 Headteacher Registration")
