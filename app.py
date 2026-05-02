@@ -1827,11 +1827,13 @@ def validate_circuit_columns(columns):
 
 
 def build_excel_template(columns, filename="Template", sheet_name="EduPulse_Data", num_rows=100, school_type_default=False):
-    output = io.BytesIO()
     df = pd.DataFrame("", index=range(num_rows), columns=columns)
     if school_type_default and "School_Type" in df.columns:
         df["School_Type"] = "Public"
+
+    # Primary: xlsxwriter (styled headers, locked rows, branding footer)
     try:
+        output = io.BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             df.to_excel(writer, sheet_name=sheet_name, index=False)
             workbook = writer.book
@@ -1853,11 +1855,21 @@ def build_excel_template(columns, filename="Template", sheet_name="EduPulse_Data
             worksheet.freeze_panes(1, 0)
             worksheet.write(num_rows + 1, 0, f"\u00a9 2026 {BLOOMCORE_FOOTER_TEXT}", warning_format)
             worksheet.write(num_rows + 2, 0, "WARNING: DO NOT RENAME OR MOVE COLUMN HEADERS.", warning_format)
+        return output.getvalue()
     except Exception:
-        # Fallback to openpyxl if xlsxwriter unavailable
+        pass
+
+    # Fallback 1: openpyxl (unstyled but valid xlsx)
+    try:
+        output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df.to_excel(writer, sheet_name=sheet_name, index=False)
-    return output.getvalue()
+        return output.getvalue()
+    except Exception:
+        pass
+
+    # Fallback 2: plain CSV bytes if neither Excel engine is available
+    return build_template_csv_bytes(columns)
 
 
 def build_template_csv_bytes(columns):
