@@ -1664,7 +1664,7 @@ EduPulse Education Management System
 
 
 # ============================================================
-# 5. CIRCUIT MAPPING, CSV TEMPLATES, AND DATASET VALIDATION
+# 5. CIRCUIT MAPPING, EXCEL TEMPLATES, AND DATASET VALIDATION
 # ============================================================
 def load_circuit_lookup():
     mapping_df = load_circuit_mapping_df()
@@ -1757,7 +1757,7 @@ def get_circuit_file_status():
         return {
             "ready": False,
             "severity": "info",
-            "message": "No active circuits file has been uploaded yet. The Director must load the official circuits CSV before school onboarding can continue.",
+            "message": "No active circuits file has been uploaded yet. The Director must upload the official circuits dataset before school onboarding can continue.",
         }
     return {
         "ready": True,
@@ -1799,7 +1799,7 @@ def validate_prediction_template_columns(columns):
         message_parts.append(
             "The header names are correct but the column order was changed. Please use the template without editing the header row."
         )
-    return False, "CSV template mismatch. " + " ".join(message_parts)
+    return False, "Dataset template mismatch. " + " ".join(message_parts)
 
 
 def validate_circuit_columns(columns):
@@ -1823,7 +1823,7 @@ def validate_circuit_columns(columns):
         message_parts.append(
             "The header names are correct but the column order was changed. Please use the template without editing the header row."
         )
-    return False, "Circuit CSV template mismatch. " + " ".join(message_parts)
+    return False, "Circuit template mismatch. " + " ".join(message_parts)
 
 
 def build_excel_template(columns, filename="Template", sheet_name="EduPulse_Data", num_rows=100, school_type_default=False):
@@ -2055,7 +2055,7 @@ def get_data_file_status():
         return {
             "ready": False,
             "severity": "info",
-            "message": "No active student dataset has been synced yet. Headteachers will upload their own school CSV files after the Director loads the circuits map.",
+            "message": "No active student dataset has been synced yet. Headteachers will upload their own school Excel files after the Director loads the circuits dataset.",
         }
     columns_valid, column_message = validate_live_dataset_columns(data_df.columns.tolist())
     if not columns_valid:
@@ -2089,7 +2089,7 @@ def get_school_sync_status(school):
             "ready": False,
             "severity": "info",
             "rows": 0,
-            "message": f"No student dataset has been synced yet for {school}. Upload the school CSV first.",
+            "message": f"No student dataset has been synced yet for {school}. Upload the school dataset first.",
         }
 
     student_df.columns = [str(column).replace("\ufeff", "").strip() for column in student_df.columns]
@@ -2118,7 +2118,7 @@ def get_school_sync_status(school):
             "ready": False,
             "severity": "info",
             "rows": 0,
-            "message": f"{school} has not synced any student rows yet. Upload the school CSV before first login.",
+            "message": f"{school} has not synced any student rows yet. Upload the school dataset before first login.",
         }
 
     return {
@@ -3217,7 +3217,7 @@ def login_ui():
         if reg_code == active_config["headteacher_security_key"]:
             school_options = load_school_options()
             if not school_options:
-                st.warning("The Director must upload the circuits CSV first so Headteachers can choose their school.")
+                st.warning("No schools are available yet. The Director must upload the circuits dataset first so Headteachers can choose their school.")
                 return
 
             with st.form("registration_form"):
@@ -3920,7 +3920,7 @@ SUBJECT_ALIASES = {
 
 def normalize_subject_name(raw_name):
     """Resolves subject name aliases to their canonical form.
-    Works for input from PDFs, CSV uploads, and Google Sheets.
+    Works for input from PDFs, Excel/CSV uploads, and Google Sheets.
     """
     clean_name = str(raw_name).strip().upper()
     clean_name = re.sub(r"\s+", " ", clean_name)
@@ -4190,7 +4190,7 @@ def merge_official_results_for_school(existing_school_df, official_df, school, s
     return merged_df, review_rows, matched_count, official_only_count
 
 
-def sync_student_upload(prepared_df, school, school_circuit, redirect_to_login=False, source_label="student CSV"):
+def sync_student_upload(prepared_df, school, school_circuit, redirect_to_login=False, source_label="student dataset"):
 
     # Each sync replaces only the current school's rows, keeping the
     # rest of the municipality dataset intact for other schools.
@@ -4809,7 +4809,7 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
                 elif uploaded_df.empty:
                     st.warning("The uploaded prediction template has the correct headers, but it does not contain any student rows yet.")
                 elif not school_circuit:
-                    st.error("This school is not yet mapped to a circuit. Ask the Director to update the circuits CSV before syncing school data.")
+                    st.error("This school is not yet mapped to a circuit. Ask the Director to update the circuits dataset before syncing school data.")
                 else:
                     prepared_df = prepare_student_upload_df(uploaded_df)
                     if prepared_df.empty:
