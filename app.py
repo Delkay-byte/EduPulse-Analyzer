@@ -3814,22 +3814,54 @@ def _extract_waec_pdf_rows_fallback_v2(clean_text, school_name):
     return school_name, extracted_rows
 
 
+SUBJECT_ALIASES = {
+    "C.A. & DESIGN": "CREATIVE ARTS DESIGN",
+    "C. A. & DESIGN": "CREATIVE ARTS DESIGN",
+    "CA & DESIGN": "CREATIVE ARTS DESIGN",
+    "C A & DESIGN": "CREATIVE ARTS DESIGN",
+    "CA DESIGN": "CREATIVE ARTS DESIGN",
+    "C.A. DESIGN": "CREATIVE ARTS DESIGN",
+    "C. A. DESIGN": "CREATIVE ARTS DESIGN",
+    "CREATIVE ARTS & DESIGN": "CREATIVE ARTS DESIGN",
+    "CREATIVE ARTS & DES.": "CREATIVE ARTS DESIGN",
+    "CREATIVE ARTS AND DESIGN": "CREATIVE ARTS DESIGN",
+    "FRENCH": "FRENCH",
+    "COMPUTING": "COMPUTING",
+    "ICT": "COMPUTING",
+    "INFORMATION AND COMMUNICATION TECHNOLOGY": "COMPUTING",
+    "ENGLISH LANG.": "ENGLISH LANGUAGE",
+    "ENGLISH LANG": "ENGLISH LANGUAGE",
+    "SOCIAL STUD.": "SOCIAL STUDIES",
+    "SOCIAL STUD": "SOCIAL STUDIES",
+    "R.M.E.": "RME",
+    "R. M. E.": "RME",
+    "R.M.E": "RME",
+    "CAREER TECH.": "CAREER TECHNOLOGY",
+    "CAREER TECH": "CAREER TECHNOLOGY",
+    "BASIC DESIGN AND TECHNOLOGY": "CAREER TECHNOLOGY",
+    "BDT": "CAREER TECHNOLOGY",
+    "EPE": "EWE",
+}
+
+
+def normalize_subject_name(raw_name):
+    """Resolves subject name aliases to their canonical form.
+    Works for input from PDFs, CSV uploads, and Google Sheets.
+    """
+    clean_name = str(raw_name).strip().upper()
+    clean_name = re.sub(r"\s+", " ", clean_name)
+    return SUBJECT_ALIASES.get(clean_name, clean_name)
+
+
 def normalize_waec_subject_label(subject_label):
     label = str(subject_label).upper().strip()
-    # Handle Creative Arts variants BEFORE stripping special chars
-    # to preserve the distinction between C.A.&Design and French
-    for ca_variant in ["C. A. & DESIGN", "C.A. & DESIGN", "C A & DESIGN",
-                       "C.A. DESIGN", "C. A. DESIGN", "CREATIVE ARTS & DESIGN",
-                       "CREATIVE ARTS & DES.", "CA DESIGN", "C A DESIGN"]:
-        if ca_variant in label:
-            return "CREATIVE ARTS DESIGN"
+    label = re.sub(r"\s+", " ", label)
+    # Resolve through alias map first (handles all known variants including C.A.&Design)
+    resolved = normalize_subject_name(label)
+    if resolved != label:
+        return resolved
+    # Secondary normalization for patterns not in the alias map
     label = label.replace(":", " ")
-    label = label.replace("EPE", "EWE")
-    label = label.replace("LANG.", "LANGUAGE")
-    label = label.replace("STUD.", "STUDIES")
-    label = label.replace("R.M.E.", "RME")
-    label = label.replace("R. M. E.", "RME")
-    label = label.replace("CAREER TECH.", "CAREER TECHNOLOGY")
     label = label.replace("&", " ")
     label = re.sub(r"[^A-Z ]+", " ", label)
     return re.sub(r"\s+", " ", label).strip()
