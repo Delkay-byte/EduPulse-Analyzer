@@ -4555,15 +4555,65 @@ def build_student_counselling_sheet_pdf(student_row, scenario_name, intervention
 # ============================================================
 # 10. DATA SETUP, UPLOAD UX, REPORTS, AND COMMUNICATION TOOLS
 # ============================================================
+def generate_professional_excel(district_name, columns):
+    df = pd.DataFrame("", index=range(50), columns=columns)
+    df["School_Type"] = ""
+
+    try:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="Circuits", startrow=2)
+            workbook = writer.book
+            worksheet = writer.sheets["Circuits"]
+
+            title_format = workbook.add_format({
+                "bold": True,
+                "font_size": 16,
+                "align": "center",
+                "valign": "vcenter",
+                "font_color": "#1E3A8A",
+                "bg_color": "#F3F4F6",
+            })
+            col_header_format = workbook.add_format({
+                "bold": True,
+                "bg_color": "#1E3A8A",
+                "font_color": "#FFFFFF",
+                "border": 1,
+            })
+            unlocked_format = workbook.add_format({"locked": False})
+            warning_format = workbook.add_format({"italic": True, "font_color": "#CC0000", "bold": True})
+
+            heading_text = f"{str(district_name).upper()} - EDU-PULSE CIRCUIT TEMPLATE"
+            worksheet.merge_range(0, 0, 1, len(columns) - 1, heading_text, title_format)
+
+            for col_num, col_name in enumerate(columns):
+                worksheet.write(2, col_num, col_name, col_header_format)
+                col_width = max(len(str(col_name)) + 5, 20)
+                worksheet.set_column(col_num, col_num, col_width, unlocked_format)
+
+            worksheet.freeze_panes(3, 0)
+            worksheet.protect()
+            footer_row = 50 + 4
+            worksheet.write(footer_row, 0, f"\u00a9 2026 {BLOOMCORE_FOOTER_TEXT}", warning_format)
+            worksheet.write(footer_row + 1, 0, "WARNING: DO NOT RENAME OR MOVE COLUMN HEADERS.", warning_format)
+
+        return output.getvalue()
+    except Exception:
+        pass
+
+    return build_excel_template(columns, filename="Director_Circuit_Map", sheet_name="Circuits", num_rows=50, school_type_default=False)
+
+
 def render_circuit_setup(title, description, key_prefix, redirect_to_login=False):
     st.markdown(f"### {title}")
     st.write(description)
 
+    _district_name = load_app_config().get("district_name", "") or "District/Municipal"
     left_col, right_col = st.columns([1, 1])
     with left_col:
         st.download_button(
             "Download Circuits Template (Excel)",
-            build_excel_template(EXPECTED_CIRCUIT_COLUMNS, filename="Director_Circuit_Map", sheet_name="Circuits", num_rows=50, school_type_default=True),
+            generate_professional_excel(_district_name, EXPECTED_CIRCUIT_COLUMNS),
             file_name="edupulse_circuits_template.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"{key_prefix}_download",
