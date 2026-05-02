@@ -1826,10 +1826,43 @@ def validate_circuit_columns(columns):
     return False, "Circuit CSV template mismatch. " + " ".join(message_parts)
 
 
+def build_excel_template(columns, filename="Template", sheet_name="EduPulse_Data", num_rows=100, school_type_default=False):
+    output = io.BytesIO()
+    df = pd.DataFrame("", index=range(num_rows), columns=columns)
+    if school_type_default and "School_Type" in df.columns:
+        df["School_Type"] = "Public"
+    try:
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            workbook = writer.book
+            worksheet = writer.sheets[sheet_name]
+            header_format = workbook.add_format({
+                "bold": True,
+                "text_wrap": True,
+                "valign": "vcenter",
+                "fg_color": "#1E3A8A",
+                "font_color": "#FFFFFF",
+                "border": 1,
+            })
+            unlocked_format = workbook.add_format({"locked": False})
+            warning_format = workbook.add_format({"italic": True, "font_color": "#CC0000", "bold": True})
+            worksheet.protect()
+            for col_num, value in enumerate(df.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+                worksheet.set_column(col_num, col_num, 20, unlocked_format)
+            worksheet.freeze_panes(1, 0)
+            worksheet.write(num_rows + 1, 0, f"\u00a9 2026 {BLOOMCORE_FOOTER_TEXT}", warning_format)
+            worksheet.write(num_rows + 2, 0, "WARNING: DO NOT RENAME OR MOVE COLUMN HEADERS.", warning_format)
+    except Exception:
+        # Fallback to openpyxl if xlsxwriter unavailable
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+    return output.getvalue()
+
+
 def build_template_csv_bytes(columns):
     output = io.StringIO()
     writer = csv.writer(output)
-    # Add warning comment at top - users should NOT modify column headers
     writer.writerow(["# WARNING: DO NOT EDIT OR DELETE THESE COLUMN HEADERS - ONLY FILL IN DATA ROWS BELOW"])
     writer.writerow(["#"])
     writer.writerow(columns)
@@ -1976,17 +2009,12 @@ def get_edupulse_headers(for_template=True):
 def build_headteacher_student_template_bytes(school, circuit="", school_type="", num_students=None):
     num_rows = int(num_students) if num_students and int(num_students) > 0 else HEADTEACHER_TEMPLATE_ROWS
     columns = get_edupulse_headers(for_template=True)
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["# WARNING: DO NOT EDIT OR DELETE THESE COLUMN HEADERS - ONLY FILL IN DATA ROWS BELOW"])
-    writer.writerow(["#"])
-    writer.writerow(columns)
-    for _ in range(num_rows):
-        writer.writerow([""] * len(columns))
-    footer_row = [""] * len(columns)
-    footer_row[0] = BLOOMCORE_FOOTER_TEXT
-    writer.writerow(footer_row)
-    return output.getvalue().encode("utf-8")
+    return build_excel_template(
+        columns=columns,
+        filename=f"{school}_EduPulse_Template",
+        sheet_name="EduPulse_Data",
+        num_rows=num_rows,
+    )
 
 
 def clean_uploaded_dataframe(df):
@@ -4505,10 +4533,10 @@ def render_circuit_setup(title, description, key_prefix, redirect_to_login=False
     left_col, right_col = st.columns([1, 1])
     with left_col:
         st.download_button(
-            "Download Circuits Template",
-            build_template_csv_bytes(EXPECTED_CIRCUIT_COLUMNS),
-            file_name="edupulse_circuits_template.csv",
-            mime="text/csv",
+            "Download Circuits Template (Excel)",
+            build_excel_template(EXPECTED_CIRCUIT_COLUMNS, filename="Director_Circuit_Map", sheet_name="Circuits", num_rows=50, school_type_default=True),
+            file_name="edupulse_circuits_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"{key_prefix}_download",
             use_container_width=True,
         )
@@ -4640,14 +4668,18 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
         with dl_col:
             st.write("")
             st.write("")
-            st.download_button(
-                f"Download Template ({int(num_students)} rows)",
-                build_headteacher_student_template_bytes(school, school_circuit, school_type, num_students=int(num_students)),
-                file_name=f"edupulse_{school.lower().replace(' ', '_')}_student_data_template.csv",
-                mime="text/csv",
-                key=f"{key_prefix}_download_csv",
-                use_container_width=True,
-            )
+            try:
+                excel_bytes = build_headteacher_student_template_bytes(school, school_circuit, school_type, num_students=int(num_students))
+                st.download_button(
+                    f"📥 Download Template ({int(num_students)} rows)",
+                    excel_bytes,
+                    file_name=f"edupulse_{school.lower().replace(' ', '_')}_student_data_template.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"{key_prefix}_download_csv",
+                    use_container_width=True,
+                )
+            except Exception as _exc:
+                st.warning(f"Could not generate template: {_exc}")
         st.caption(
             f"The template has {int(num_students)} blank rows ready to fill. School, circuit, and school type are added automatically on upload — you only need to fill in Student_Name, Gender, Date_of_Birth, Attendance_Percent, and subject assessment scores. Student IDs are also assigned automatically when you sync."
         )
