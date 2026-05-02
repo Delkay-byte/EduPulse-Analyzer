@@ -365,7 +365,7 @@ PREDICTION_TEMPLATE_COLUMNS = [
 HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS = [
     column
     for column in PREDICTION_TEMPLATE_COLUMNS
-    if column not in {"Student_ID", "School_Name", "Circuit", "School_Type"}
+    if column not in {"School_Name", "Circuit", "School_Type"}
 ]
 CORE_FINAL_SUBJECTS = [
     "Mathematics_Final_BECE",
