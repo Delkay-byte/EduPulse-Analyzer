@@ -4660,7 +4660,7 @@ def render_circuit_setup(title, description, key_prefix, redirect_to_login=False
         return
 
     if uploaded_df.empty:
-        st.warning("The uploaded circuits CSV has the correct headers, but it does not contain any school rows yet.")
+        st.warning("The uploaded circuits file has the correct headers, but it does not contain any school rows yet.")
         render_scroll_to_top()
         return
 
@@ -4671,17 +4671,17 @@ def render_circuit_setup(title, description, key_prefix, redirect_to_login=False
     cleaned_df["Circuit"] = cleaned_df["Circuit"].fillna("").astype(str).str.strip()
     original_school_type_series = cleaned_df["School_Type"].copy()
     cleaned_df["School_Type"] = normalize_school_type_series(cleaned_df["School_Type"])
-    invalid_school_types = summarize_invalid_school_type_values(original_school_type_series)
-    if invalid_school_types:
-        st.error(
-            "School_Type must be Public or Private. Invalid values detected: "
-            + ", ".join(invalid_school_types[:10])
-            + ("..." if len(invalid_school_types) > 10 else "")
+
+    # Identify rows where School_Type is still blank or invalid after normalization
+    invalid_mask = ~cleaned_df["School_Type"].isin(["Public", "Private"])
+    invalid_rows = cleaned_df[invalid_mask & (cleaned_df["School_Name"] != "")]
+    if not invalid_rows.empty:
+        st.warning(f"⚠️ Found {len(invalid_rows)} row(s) with missing or invalid School_Type.")
+        st.dataframe(
+            invalid_rows[["School_Name", "Circuit", "School_Type"]].reset_index(drop=True),
+            use_container_width=True,
         )
-        render_scroll_to_top()
-        return
-    if cleaned_df["School_Type"].eq("").any():
-        st.error("Every row must include School_Type as either Public or Private.")
+        st.error("Please ensure every school is marked as 'Public' or 'Private' and re-upload.")
         render_scroll_to_top()
         return
     cleaned_df = cleaned_df[(cleaned_df["School_Name"] != "") & (cleaned_df["Circuit"] != "")]
