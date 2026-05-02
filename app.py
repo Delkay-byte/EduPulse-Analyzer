@@ -2021,10 +2021,60 @@ def get_edupulse_headers(for_template=True):
 def build_headteacher_student_template_bytes(school, circuit="", school_type="", num_students=None):
     num_rows = int(num_students) if num_students and int(num_students) > 0 else HEADTEACHER_TEMPLATE_ROWS
     columns = get_edupulse_headers(for_template=True)
+
+    # Primary: professional xlsxwriter template with school-name heading
+    try:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df = pd.DataFrame("", index=range(num_rows), columns=columns)
+            df.to_excel(writer, index=False, sheet_name="Student_Data", startrow=2)
+            workbook = writer.book
+            worksheet = writer.sheets["Student_Data"]
+
+            header_fmt = workbook.add_format({
+                "bold": True,
+                "font_size": 18,
+                "align": "center",
+                "valign": "vcenter",
+                "font_color": "#FFFFFF",
+                "bg_color": "#102A43",
+            })
+            col_header_fmt = workbook.add_format({
+                "bold": True,
+                "bg_color": "#1E3A8A",
+                "font_color": "#FFFFFF",
+                "border": 1,
+                "text_wrap": True,
+                "valign": "vcenter",
+            })
+            unlocked_fmt = workbook.add_format({"locked": False})
+            footer_fmt = workbook.add_format({
+                "font_size": 10,
+                "font_color": "#9AA5B1",
+                "italic": True,
+            })
+
+            heading_text = f"{str(school).upper()} - STUDENT ACADEMIC RECORD TEMPLATE"
+            worksheet.merge_range(0, 0, 1, len(columns) - 1, heading_text, header_fmt)
+
+            for col_num, col_name in enumerate(columns):
+                worksheet.write(2, col_num, col_name, col_header_fmt)
+                worksheet.set_column(col_num, col_num, 25, unlocked_fmt)
+
+            worksheet.freeze_panes(3, 0)
+            worksheet.protect()
+            worksheet.write(999, 0, f"\u00a9 2026 {BLOOMCORE_FOOTER_TEXT}", footer_fmt)
+            worksheet.write(1000, 0, "WARNING: DO NOT RENAME COLUMN HEADERS IN ROW 3.", footer_fmt)
+
+        return output.getvalue()
+    except Exception:
+        pass
+
+    # Fallback: generic styled template without merged heading
     return build_excel_template(
         columns=columns,
         filename=f"{school}_EduPulse_Template",
-        sheet_name="EduPulse_Data",
+        sheet_name="Student_Data",
         num_rows=num_rows,
     )
 
@@ -4773,9 +4823,9 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
             try:
                 excel_bytes = build_headteacher_student_template_bytes(school, school_circuit, school_type, num_students=int(num_students))
                 st.download_button(
-                    f"📥 Download Template ({int(num_students)} rows)",
+                    f"📥 Download {school} Template ({int(num_students)} rows)",
                     excel_bytes,
-                    file_name=f"edupulse_{school.lower().replace(' ', '_')}_student_data_template.xlsx",
+                    file_name=f"edupulse_{school.lower().replace(' ', '_')}_template.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key=f"{key_prefix}_download_csv",
                     use_container_width=True,
