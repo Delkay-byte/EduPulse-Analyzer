@@ -2037,8 +2037,14 @@ def clean_uploaded_dataframe(df):
         return cleaned_df
 
     first_column = cleaned_df.columns[0]
-    footer_mask = cleaned_df[first_column].fillna("").astype(str).str.strip().eq(BLOOMCORE_FOOTER_TEXT)
-    cleaned_df = cleaned_df.loc[~footer_mask].copy()
+    first_col_str = cleaned_df[first_column].fillna("").astype(str).str.strip()
+    # Drop exact footer text, copyright lines (©), and WARNING metadata rows
+    metadata_mask = (
+        first_col_str.eq(BLOOMCORE_FOOTER_TEXT)
+        | first_col_str.str.startswith("\u00a9")
+        | first_col_str.str.upper().str.startswith("WARNING")
+    )
+    cleaned_df = cleaned_df.loc[~metadata_mask].copy()
     cleaned_df = cleaned_df.dropna(how="all")
     return cleaned_df
 
