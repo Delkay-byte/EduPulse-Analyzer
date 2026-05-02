@@ -2061,6 +2061,10 @@ def build_headteacher_student_template_bytes(school, circuit="", school_type="",
                 worksheet.write(2, col_num, col_name, col_header_fmt)
                 worksheet.set_column(col_num, col_num, 25, unlocked_fmt)
 
+            # Explicitly unlock every data entry row so headteachers can type in them
+            for data_row in range(3, num_rows + 3):
+                worksheet.set_row(data_row, None, unlocked_fmt)
+
             worksheet.freeze_panes(3, 0)
             worksheet.protect()
             worksheet.write(999, 0, f"\u00a9 2026 {BLOOMCORE_FOOTER_TEXT}", footer_fmt)
