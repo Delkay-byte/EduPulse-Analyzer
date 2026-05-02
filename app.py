@@ -5022,20 +5022,47 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
                         existing_all_df=existing_all_df,
                     )
 
-                    st.success("Official WAEC result import mapped successfully.")
-                    st.write(
-                        f"Parsed school: {parsed_school} | Circuit: {parsed_circuit} | School Type: {parsed_school_type} | Matched fields: {', '.join(matched_fields)}"
-                        + (f" | Auto-assigned Student_IDs: {auto_assigned_count}" if auto_assigned_count else "")
-                        + (
-                            f" | Auto-filled Attendance rows: {auto_filled_attendance_count} at {attendance_fill_value:.1f}%"
-                            if auto_filled_attendance_count and attendance_fill_value is not None
-                            else ""
-                        )
-                    )
-                    preview_cols = [column for column in ["Student_ID", "Student_Name", "Gender", "Date_of_Birth", "School_Name", "Circuit", "School_Type"] if column in prepared_official_df.columns]
-                    st.dataframe(prepared_official_df[preview_cols].head(10), use_container_width=True)
+                    st.success(f"✅ Official WAEC result import mapped successfully. Detected **{len(prepared_official_df)}** student rows for **{school}**.")
 
-                    if st.button("Sync Official WAEC Results to Director Dashboard", type="primary", key=f"{key_prefix}_official_sync"):
+                    info_parts = [
+                        f"Circuit: {parsed_circuit}",
+                        f"School Type: {parsed_school_type}",
+                        f"Matched fields: {', '.join(matched_fields)}",
+                    ]
+                    if auto_assigned_count:
+                        info_parts.append(f"Auto-assigned Student IDs: {auto_assigned_count}")
+                    if auto_filled_attendance_count and attendance_fill_value is not None:
+                        info_parts.append(f"Auto-filled Attendance: {auto_filled_attendance_count} rows at {attendance_fill_value:.1f}%")
+                    st.info(" | ".join(info_parts))
+
+                    st.markdown("### 👁️ Review Extracted Data")
+                    st.write("Verify every student record before submitting. Use the search box to confirm a specific student was captured from the PDF.")
+
+                    waec_search = st.text_input(
+                        "🔍 Search by student name",
+                        placeholder="e.g. Ama Asante",
+                        key=f"{key_prefix}_waec_search",
+                    )
+                    if waec_search.strip():
+                        waec_display_df = prepared_official_df[
+                            prepared_official_df["Student_Name"].fillna("").astype(str).str.contains(waec_search.strip(), case=False, na=False)
+                        ]
+                        if waec_display_df.empty:
+                            st.warning(f"No student matching '{waec_search}' found in this import.")
+                        else:
+                            st.success(f"Found {len(waec_display_df)} matching row(s).")
+                    else:
+                        waec_display_df = prepared_official_df
+
+                    st.dataframe(waec_display_df.reset_index(drop=True), use_container_width=True, height=500)
+
+                    with st.expander("📊 Subject score preview (first 10 rows)"):
+                        score_cols = ["Student_Name"] + [c for c in prepared_official_df.columns if c.endswith("_Final_BECE")]
+                        available_score_cols = [c for c in score_cols if c in prepared_official_df.columns]
+                        st.dataframe(prepared_official_df[available_score_cols].head(10), use_container_width=True)
+
+                    st.divider()
+                    if st.button("✅ Confirm & Sync Official WAEC Results to Director Dashboard", type="primary", key=f"{key_prefix}_official_sync"):
                         try:
                             sync_student_upload(
                                 prepared_official_df,
