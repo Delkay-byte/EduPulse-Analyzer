@@ -4697,12 +4697,18 @@ def render_circuit_setup(title, description, key_prefix, redirect_to_login=False
         render_scroll_to_top()
         return
 
-    st.success("Circuits template validation passed.")
-    detected_circuits = combine_known_circuits(cleaned_df["Circuit"])
-    st.write(f"Detected rows: {len(cleaned_df)} | Circuits: {len(detected_circuits)}")
-    st.dataframe(cleaned_df.head(12), use_container_width=True)
+    st.success(f"✅ Circuits template validation passed. Detected rows: {len(cleaned_df)} | Circuits: {cleaned_df['Circuit'].nunique()}")
+    st.markdown("### 📋 Preview Uploaded Data")
+    st.info("Please review all schools below. Scroll the table to verify every school is present before confirming.")
 
-    if st.button("Replace Active Circuits Dataset", type="primary", key=f"{key_prefix}_replace"):
+    search_query = st.text_input("Search for a school to verify (e.g., 'Awasive')", key=f"{key_prefix}_search")
+    if search_query.strip():
+        display_df = cleaned_df[cleaned_df["School_Name"].str.contains(search_query.strip(), case=False, na=False)]
+    else:
+        display_df = cleaned_df
+    st.dataframe(display_df.reset_index(drop=True), use_container_width=True, height=500)
+
+    if st.button("Confirm & Replace Active Circuits Dataset", type="primary", key=f"{key_prefix}_replace"):
         write_dataframe_to_csv(cleaned_df, CIRCUITS_FILE, EXPECTED_CIRCUIT_COLUMNS)
         st.cache_data.clear()
         if redirect_to_login:
