@@ -320,6 +320,13 @@ EXPECTED_DATA_COLUMNS = [
     "BDT_Mock2",
     "BDT_Predicted_BECE",
     "BDT_Final_BECE",
+    "Creative_Arts_Assignments",
+    "Creative_Arts_Term1_Exam",
+    "Creative_Arts_Term2_Exam",
+    "Creative_Arts_Mock1",
+    "Creative_Arts_Mock2",
+    "Creative_Arts_Predicted_BECE",
+    "Creative_Arts_Final_BECE",
     "French_Assignments",
     "French_Term1_Exam",
     "French_Term2_Exam",
@@ -327,6 +334,13 @@ EXPECTED_DATA_COLUMNS = [
     "French_Mock2",
     "French_Predicted_BECE",
     "French_Final_BECE",
+    "Arabic_Assignments",
+    "Arabic_Term1_Exam",
+    "Arabic_Term2_Exam",
+    "Arabic_Mock1",
+    "Arabic_Mock2",
+    "Arabic_Predicted_BECE",
+    "Arabic_Final_BECE",
     "Ewe_Assignments",
     "Ewe_Term1_Exam",
     "Ewe_Term2_Exam",
@@ -1948,16 +1962,28 @@ def assign_missing_internal_tracking_ids(student_df):
     return assigned_df, missing_count
 
 
+def get_edupulse_headers(for_template=True):
+    """
+    Context-aware header generator.
+    for_template=True  -> blank download (no Final_BECE or analytics columns)
+    for_template=False -> full analysis columns (includes Final_BECE and Action_Zone)
+    """
+    if for_template:
+        return HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS
+    return EXPECTED_DATA_COLUMNS
+
+
 def build_headteacher_student_template_bytes(school, circuit="", school_type="", num_students=None):
     num_rows = int(num_students) if num_students and int(num_students) > 0 else HEADTEACHER_TEMPLATE_ROWS
+    columns = get_edupulse_headers(for_template=True)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["# WARNING: DO NOT EDIT OR DELETE THESE COLUMN HEADERS - ONLY FILL IN DATA ROWS BELOW"])
     writer.writerow(["#"])
-    writer.writerow(HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS)
+    writer.writerow(columns)
     for _ in range(num_rows):
-        writer.writerow([""] * len(HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS))
-    footer_row = [""] * len(HEADTEACHER_UPLOAD_TEMPLATE_COLUMNS)
+        writer.writerow([""] * len(columns))
+    footer_row = [""] * len(columns)
     footer_row[0] = BLOOMCORE_FOOTER_TEXT
     writer.writerow(footer_row)
     return output.getvalue().encode("utf-8")
