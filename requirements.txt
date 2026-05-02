@@ -9,3 +9,5 @@ fpdf
 gspread
 google-auth
 pdfplumber
+xlsxwriter
+openpyxl
