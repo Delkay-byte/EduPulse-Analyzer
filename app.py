@@ -4906,17 +4906,42 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
                                 )
                                 prepared_df = populate_provisional_final_scores(prepared_df)
 
-                                st.success("Prediction template validation passed.")
-                                status_message = f"Detected rows for {school}: {len(prepared_df)} | Circuit: {school_circuit} | School Type: {school_type}"
-                                if auto_assigned_count > 0:
-                                    status_message += f" | Auto-assigned Student_IDs: {auto_assigned_count}"
-                                if auto_filled_attendance_count > 0 and attendance_fill_value is not None:
-                                    status_message += f" | Auto-filled Attendance rows: {auto_filled_attendance_count} at {attendance_fill_value:.1f}%"
-                                st.write(status_message)
-                                preview_cols = [column for column in ["Student_ID", "Student_Name", "Gender", "School_Name", "Circuit", "School_Type"] if column in prepared_df.columns]
-                                st.dataframe(prepared_df[preview_cols].head(10), use_container_width=True)
+                                st.success(f"✅ Prediction template validation passed. Detected **{len(prepared_df)}** student rows for **{school}**.")
 
-                                if st.button("Sync Prediction Template to Director Dashboard", type="primary", key=f"{key_prefix}_sync"):
+                                info_parts = [f"Circuit: {school_circuit}", f"School Type: {school_type}"]
+                                if auto_assigned_count > 0:
+                                    info_parts.append(f"Auto-assigned Student IDs: {auto_assigned_count}")
+                                if auto_filled_attendance_count > 0 and attendance_fill_value is not None:
+                                    info_parts.append(f"Auto-filled Attendance: {auto_filled_attendance_count} rows at {attendance_fill_value:.1f}%")
+                                st.info(" | ".join(info_parts))
+
+                                st.markdown("### 👁️ Review Uploaded Data")
+                                st.write("Check each student row carefully before submitting. Use the search box to confirm a specific student is present.")
+
+                                student_search = st.text_input(
+                                    "🔍 Search by student name",
+                                    placeholder="e.g. Kofi Mensah",
+                                    key=f"{key_prefix}_student_search",
+                                )
+                                if student_search.strip():
+                                    display_df = prepared_df[
+                                        prepared_df["Student_Name"].fillna("").astype(str).str.contains(student_search.strip(), case=False, na=False)
+                                    ]
+                                    if display_df.empty:
+                                        st.warning(f"No student matching '{student_search}' found in this upload.")
+                                    else:
+                                        st.success(f"Found {len(display_df)} matching row(s).")
+                                else:
+                                    display_df = prepared_df
+
+                                st.dataframe(display_df.reset_index(drop=True), use_container_width=True, height=500)
+
+                                with st.expander("📊 Score preview (first 10 rows)"):
+                                    score_cols = ["Student_Name"] + [c for c in prepared_df.columns if any(s in c for s in ["Assignments", "Term1", "Term2", "Mock"])]
+                                    st.dataframe(prepared_df[score_cols].head(10), use_container_width=True)
+
+                                st.divider()
+                                if st.button("✅ Confirm & Sync to Director Dashboard", type="primary", key=f"{key_prefix}_sync"):
                                     try:
                                         sync_student_upload(
                                             prepared_df,
