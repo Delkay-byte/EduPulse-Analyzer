@@ -3590,6 +3590,55 @@ def clean_waec_results_fragment(results_fragment):
     return results_text
 
 
+def clean_waec_text_block(full_text):
+    """Obliterates all browser print headers, footers, and table columns."""
+    lines = full_text.splitlines()
+    clean_lines = []
+
+    noise_keywords = [
+        "WAEC RESULTS LISTING",
+        "HTTPS://RESULTSLISTING.WAECGH.ORG",
+        "COMMITTED TO EXCELLENCE",
+        "TOTAL NUMBER OF CANDIDATES",
+        "DISCLAIMER",
+        "THE RESULT LISTING ARE PROVISIONAL",
+        "THE FINAL RESULTS ARE THOSE",
+        "INDEX NUMBER NAME GENDER DOB RESULTS",
+        "INDEX NUMBER",
+        "NAME",
+        "GENDER",
+        "DOB",
+        "RESULTS"
+    ]
+
+    for line in lines:
+        upper_line = line.strip().upper()
+        if not upper_line:
+            continue
+
+        # Destroy browser datetimes (e.g., 4/25/25, 3:06 PM)
+        if re.search(r'\d{1,2}/\d{1,2}/\d{2,4},?\s*\d{1,2}:\d{2}\s*(AM|PM)', upper_line):
+            continue
+
+        # Destroy pagination (e.g., 1/4 or Page 1 of 4)
+        if re.fullmatch(r'\d+/\d+', upper_line) or re.match(r'PAGE\s+\d+', upper_line):
+            continue
+
+        # Destroy lone candidate count numbers (e.g., 13 floating under "Total Number...")
+        if re.fullmatch(r'\d{1,4}', upper_line):
+            continue
+
+        # Destroy specific keywords
+        if any(noise in upper_line for noise in noise_keywords):
+            continue
+
+        # If it survived the gauntlet, keep it
+        clean_lines.append(line.strip())
+
+    # Re-join with a single space. This stitches split rows (like Candidate 9) seamlessly!
+    return " ".join(clean_lines)
+
+
 def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
     if pdfplumber is None:
         raise ValueError("pdfplumber is not installed. Please install it to process PDF files.")
@@ -3597,349 +3646,44 @@ def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         school_name = extract_waec_school_name(pdf) or Path(fallback_school_name).stem.replace("_", " ").strip()
 
-        # Stitch ALL pages into one block to handle page-break splits
-        full_text = ""
+        raw_text = ""
         for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                full_text += page_text + "\n"
+            text = page.extract_text(x_tolerance=2, y_tolerance=3)
+            if text:
+                raw_text += text + "\n"
 
-        if not full_text.strip():
+        if not raw_text.strip():
             raise ValueError("No readable text found in the uploaded WAEC PDF.")
 
-        # ── STRATEGY 1: Pipe-delimited layout (WAEC Official Listing format) ──────
-        # Handles: "0711019001 | AMADAH SETH | Male | 12/03/2009 | ENGLISH - 5 ..."
-        pipe_pattern = re.compile(
-            r"(\d{10})\s*\|\s*([^|]+?)\s*\|\s*(Male|Female)\s*\|\s*(\d{2}/\d{2}/\d{4})",
-            re.IGNORECASE,
-        )
-        
-        if pipe_pattern.search(full_text):
-            students = []
-            current_student = None
-            for line in full_text.split("\n"):
-                match = pipe_pattern.search(line)
-                if match:
-                    if current_student:
-                        students.append(current_student)
-                    results_part = line.split("|")[-1].strip() if line.count("|") >= 4 else ""
-                    current_student = {
-                        "Student_ID": match.group(1).strip(),
-                        "Student_Name": match.group(2).strip(),
-                        "Gender": normalize_gender_token(match.group(3).strip()),
-                        "Date_of_Birth": normalize_date_of_birth(match.group(4).strip()),
-                        "Official_Results_Raw": results_part,
-                    }
-                elif current_student:
-                    if "Total Number of Candidates" in line:
-                        students.append(current_student)
-                        current_student = None
-                    elif "|" in line:
-                        # Wrapped result text on continuation lines
-                        parts = line.split("|")
-                        if len(parts) > 1:
-                            current_student["Official_Results_Raw"] += " " + parts[-1].strip()
-            if current_student:
-                students.append(current_student)
-            if students:
-                return school_name, students
+        # 1. Apply the master cleaner to remove all page-break interruptions
+        mega_string = clean_waec_text_block(raw_text)
 
-        # ── STRATEGY 2: Full-text regex stitch (no pipe delimiters) ──────────────
-        # Remove noise that could break the regex
-        noise_patterns = [
-            r"Total Number of Candidates.*",
-            r"https?://\S+.*",
-            r"\d{1,2}/\d{1,2}/\d{2,4},?\s*\d{1,2}:\d{2}\s*(?:AM|PM).*",
-            r"WAEC Results Listing",
-            r"INDEX\s+NUMBER\s+NAME\s+GENDER\s+DOB\s+RESULTS",
-            r"Page\s+\d+\s+of\s+\d+",
-        ]
-        clean_text = full_text
-        for pattern in noise_patterns:
-            clean_text = re.sub(pattern, "", clean_text, flags=re.IGNORECASE)
+        # 2. Split the mega string precisely at every 10-digit WAEC index number
+        blocks = re.split(r'(?=\b\d{10}\b)', mega_string)
 
-        student_pattern = re.compile(
-            r"(\b\d{10}\b)(.*?)(?=\b\d{10}\b|Total Number|$)",
-            re.IGNORECASE | re.DOTALL,
-        )
-        parsed_students = []
-        for match in student_pattern.finditer(clean_text):
-            index_number = match.group(1).strip()
-            raw_block = re.sub(r"\s+", " ", match.group(2).replace("\n", " ")).strip()
+        students = []
+        # Regex captures: ID (1), Name (2), Gender (3), DOB (4), and Results (5)
+        pattern = re.compile(r'^(\d{10})\s+(.*?)\s+(Male|Female)\s+(\d{2}/\d{2}/\d{4})\s+(.*)$', re.IGNORECASE)
 
-            # Only accept WAEC-format index numbers (start with 07)
-            if not re.match(r"^07\d{8}$", index_number):
+        for block in blocks:
+            block = block.strip()
+            if not block:
                 continue
 
-            meta_match = re.search(
-                r"([A-Z][A-Z\s\.\-]+?)\s+(Male|Female)\s+(\d{2}/\d{2}/\d{4})",
-                raw_block,
-                re.IGNORECASE,
-            )
-            if not meta_match:
-                continue
+            match = pattern.search(block)
+            if match:
+                students.append({
+                    "Student_ID": match.group(1).strip(),
+                    "Student_Name": match.group(2).strip(),
+                    "Gender": normalize_gender_token(match.group(3).strip()),
+                    "Date_of_Birth": normalize_date_of_birth(match.group(4).strip()),
+                    "Official_Results_Raw": match.group(5).strip(),
+                })
 
-            full_name = re.sub(r"\s+", " ", meta_match.group(1)).strip()
-            gender = meta_match.group(2).strip()
-            dob = meta_match.group(3).strip()
-            results_part = raw_block[meta_match.end():].strip(" ,|")
-            if "RESULTS" in results_part.upper():
-                results_part = re.split(r"RESULTS\s*", results_part, flags=re.IGNORECASE)[-1]
-            results_part = re.sub(r"\s+", " ", results_part).strip()
+        if not students:
+            raise ValueError("Could not parse any student data. The document layout could not be resolved.")
 
-            parsed_students.append({
-                "Student_ID": index_number,
-                "Student_Name": full_name,
-                "Gender": normalize_gender_token(gender),
-                "Date_of_Birth": normalize_date_of_birth(dob),
-                "Official_Results_Raw": results_part,
-            })
-
-        if parsed_students:
-            return school_name, parsed_students
-
-        # ── STRATEGY 3: Line-by-line fallback ────────────────────────────────────
-        return _extract_waec_pdf_line_by_line(pdf, school_name)
-
-
-def _extract_waec_pdf_line_by_line(pdf, school_name):
-    """Line-by-line extraction when table extraction fails."""
-    extracted_data = []
-    index_pattern = re.compile(r'^\d{10}$')
-    current_student = None
-    
-    for page in pdf.pages:
-        text = page.extract_text()
-        if not text:
-            continue
-        
-        lines = text.split('\n')
-        
-        for line in lines:
-            clean_line = line.strip()
-            
-            # Check if this line is an Index Number (10 digits)
-            if index_pattern.match(clean_line):
-                if current_student:
-                    extracted_data.append(current_student)
-                
-                current_student = {
-                    "Student_ID": clean_line,
-                    "Student_Name": "",
-                    "Gender": "",
-                    "Date_of_Birth": "",
-                    "Official_Results_Raw": "",
-                }
-            
-            elif current_student:
-                # Skip header noise
-                skip_words = ["INDEX NUMBER", "NAME", "GENDER", "DOB", "RESULTS", 
-                              "WAEC", "TOTAL", "CANDIDATES", "HTTPS://", "4/25/25", "PM", "AM"]
-                if any(word in clean_line.upper() for word in skip_words):
-                    continue
-                
-                if clean_line.upper() in ["MALE", "FEMALE"]:
-                    current_student["Gender"] = clean_line
-                    continue
-                
-                dob_match = re.match(r'(\d{2}/\d{2}/\d{4})$', clean_line)
-                if dob_match:
-                    current_student["Date_of_Birth"] = dob_match.group(1)
-                    continue
-                
-                if any(char.isalpha() for char in clean_line):
-                    if re.search(r'[A-Z]+\s*-\s*\d', clean_line):
-                        current_student["Official_Results_Raw"] += " " + clean_line
-                    else:
-                        current_student["Student_Name"] += " " + clean_line
-                else:
-                    current_student["Official_Results_Raw"] += " " + clean_line
-    
-    if current_student:
-        extracted_data.append(current_student)
-    
-    # Clean up
-    for student in extracted_data:
-        student["Student_Name"] = re.sub(r'\s+', ' ', student["Student_Name"]).strip()
-        student["Official_Results_Raw"] = re.sub(r'\s+', ' ', student["Official_Results_Raw"]).strip()
-        student["Gender"] = normalize_gender_token(student["Gender"])
-        student["Date_of_Birth"] = normalize_date_of_birth(student["Date_of_Birth"])
-    
-    if extracted_data:
-        return school_name, extracted_data
-    
-    # Final fallback to regex-based
-    return _extract_waec_pdf_text_based(pdf, school_name)
-
-
-def _extract_waec_pdf_text_based(pdf, school_name):
-    """Fallback text-based extraction when table extraction fails."""
-    full_text = ""
-    for page in pdf.pages:
-        page_text = page.extract_text() or ""
-        full_text += "\n" + page_text + "\n"
-
-    if not full_text.strip():
-        raise ValueError("No readable text found in the uploaded WAEC PDF.")
-
-    # Clean up noise patterns
-    noise_patterns = [
-        r"Total Number of Candidates:.*",
-        r"https?://resultslisting\.waecgh\.org.*",
-        r"\d{1,2}/\d{1,2}/\d{2,4},?\s*\d{1,2}:\d{2}\s*(AM|PM).*",
-        r"WAEC Results Listing",
-        r"INDEX NUMBER\s+NAME\s+GENDER\s+DOB\s+RESULTS",
-        r"Page \d+ of \d+",
-    ]
-    
-    clean_text = full_text
-    for pattern in noise_patterns:
-        clean_text = re.sub(pattern, "", clean_text, flags=re.IGNORECASE)
-    
-    # Use regex with DOTALL to capture multi-line student blocks
-    student_pattern = r'(\b07\d{8}\b)(.*?)(?=\b07\d{8}\b|$)'
-    matches = re.findall(student_pattern, clean_text, re.DOTALL)
-    
-    extracted_rows = []
-    
-    for index_no, raw_block in matches:
-        index_number = index_no.strip()
-        raw_data = raw_block.strip()
-        
-        if not index_number or len(index_number) != 10:
-            continue
-        
-        # Normalize whitespace
-        raw_data_normalized = re.sub(r'\n+', ' ', raw_data)
-        raw_data_normalized = re.sub(r'\s+', ' ', raw_data_normalized)
-        
-        # Extract name, gender, DOB
-        meta_match = re.search(
-            r"([A-Z][A-Z\s\.]+?)\s+(Male|Female)\s+(\d{2}/\d{2}/\d{4})",
-            raw_data_normalized,
-            re.IGNORECASE
-        )
-        
-        if meta_match:
-            full_name = meta_match.group(1).strip()
-            gender = meta_match.group(2).strip()
-            dob = meta_match.group(3).strip()
-            
-            # Extract results
-            results_part = raw_data_normalized
-            if "RESULTS" in raw_data_normalized.upper():
-                results_split = re.split(r'RESULTS\s*', raw_data_normalized, flags=re.IGNORECASE)
-                if len(results_split) > 1:
-                    results_part = results_split[-1]
-            else:
-                match_end = meta_match.end()
-                results_part = raw_data_normalized[match_end:]
-            
-            results_part = re.sub(r"\s+", " ", results_part).strip(" ,")
-            
-            extracted_rows.append({
-                "Student_ID": index_number,
-                "Student_Name": full_name,
-                "Gender": normalize_gender_token(gender),
-                "Date_of_Birth": normalize_date_of_birth(dob),
-                "Official_Results_Raw": results_part,
-            })
-    
-    return school_name, extracted_rows
-
-
-def _extract_waec_pdf_rows_fallback_v2(clean_text, school_name):
-    """Fallback extraction when primary regex pattern fails - uses line-by-line approach."""
-    lines = clean_text.split("\n")
-    extracted_rows = []
-    current_record = None
-    pending_name_parts = []
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-            
-        # Check for index number - this starts a new record
-        index_match = re.search(r'\b(07\d{8})\b', line)
-        
-        if index_match:
-            # Save previous record with assembled name
-            if current_record and current_record.get("Student_ID"):
-                if pending_name_parts:
-                    current_record["Student_Name"] = " ".join(pending_name_parts).strip()
-                extracted_rows.append(current_record)
-                pending_name_parts = []
-            
-            # Start new record
-            current_record = {
-                "Student_ID": index_match.group(1),
-                "Student_Name": "",
-                "Gender": "",
-                "Date_of_Birth": "",
-                "Official_Results_Raw": "",
-            }
-            
-            # Try to extract fields from this line after the index
-            rest = line[index_match.end():].strip()
-            
-            # Look for Name + Gender + DOB pattern in the rest
-            # Name comes first (all caps), then Gender, then DOB
-            meta_match = re.search(r"([A-Z][A-Z\s]+?)\s+(Male|Female)\s+(\d{2}/\d{2}/\d{4})", rest, re.IGNORECASE)
-            if meta_match:
-                current_record["Student_Name"] = meta_match.group(1).strip()
-                current_record["Gender"] = meta_match.group(2)
-                current_record["Date_of_Birth"] = meta_match.group(3)
-                # Results come after DOB
-                results_part = rest[meta_match.end():].strip()
-                current_record["Official_Results_Raw"] = results_part
-            else:
-                # Name might be split across lines - start collecting
-                name_part = re.match(r"([A-Z][A-Z\s]*)", rest)
-                if name_part:
-                    pending_name_parts = [name_part.group(1).strip()]
-                # Look for gender/dob on this line
-                gender_match = re.search(r'(Male|Female)', rest, re.IGNORECASE)
-                if gender_match:
-                    current_record["Gender"] = gender_match.group(1)
-                dob_match = re.search(r'(\d{2}/\d{2}/\d{4})', rest)
-                if dob_match:
-                    current_record["Date_of_Birth"] = dob_match.group(1)
-                
-        elif current_record:
-            # Check if this line has gender/dob (completes the name)
-            gender_match = re.search(r'(Male|Female)', line, re.IGNORECASE)
-            if gender_match and not current_record["Gender"]:
-                # Assemble name from pending parts
-                if pending_name_parts:
-                    current_record["Student_Name"] = " ".join(pending_name_parts).strip()
-                    pending_name_parts = []
-                current_record["Gender"] = gender_match.group(1)
-                dob_match = re.search(r'(\d{2}/\d{2}/\d{4})', line)
-                if dob_match:
-                    current_record["Date_of_Birth"] = dob_match.group(1)
-                # Results might follow
-                results_part = line.split(dob_match.group(1))[-1] if dob_match else line[gender_match.end():]
-                current_record["Official_Results_Raw"] = results_part.strip()
-            elif gender_match and current_record["Gender"]:
-                # This is results data for the current record
-                current_record["Official_Results_Raw"] += " " + line
-            elif not current_record["Gender"] and pending_name_parts is not None:
-                # Still collecting name parts
-                name_part = re.match(r"([A-Z][A-Z\s]*)\s*$", line)
-                if name_part:
-                    pending_name_parts.append(name_part.group(1).strip())
-            else:
-                # Append to results
-                current_record["Official_Results_Raw"] += " " + line
-    
-    # Don't forget last record
-    if current_record and current_record.get("Student_ID"):
-        if pending_name_parts and not current_record["Student_Name"]:
-            current_record["Student_Name"] = " ".join(pending_name_parts).strip()
-        extracted_rows.append(current_record)
-    
-    return school_name, extracted_rows
+        return school_name, students
 
 
 SUBJECT_ALIASES = {
@@ -4036,7 +3780,10 @@ def prepare_official_pdf_import(uploaded_bytes, uploaded_name, expected_school="
 
     official_rows = []
     for extracted_row in extracted_rows:
-        official_row = {column: pd.NA for column in EXPECTED_DATA_COLUMNS}
+        # FIX 1: Initialize the row dictionary with empty strings, NOT None/pd.NA.
+        # This stops Pandas from treating missing columns as float64.
+        official_row = {column: "" for column in EXPECTED_DATA_COLUMNS}
+
         official_index_number = str(extracted_row.get("Student_ID", "")).strip()
         official_row["Student_ID"] = official_index_number
         official_row["Official_Index_Number"] = official_index_number
@@ -7164,6 +6911,14 @@ def director_portal(df, subject_cols, data_status):
 
     with data_mgmt_tab:
         st.header("⚙️ District System Management")
+
+        # Display the District/Municipal Security Key for Headteacher registration
+        active_config = load_app_config()
+        if active_config.get("headteacher_security_key"):
+            st.info(
+                f"🔑 **District/Municipal Security Key for Headteacher Registration:** `{active_config['headteacher_security_key']}`"
+            )
+            st.caption("Share this key with headteachers so they can create their accounts. Keep it secure.")
 
         col1, col2 = st.columns(2)
 
