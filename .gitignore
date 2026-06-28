@@ -9,28 +9,34 @@ __pycache__/
 env/
 venv/
 ENV/
+.conda/
+conda-env/
 
 # VS Code settings
 .vscode/
+.devcontainer/
 
 # Local data / Temp files
 *.log
 .DS_Store
+*.bak
+*.backup
 
 # Streamlit secrets (never commit credentials)
 .streamlit/secrets.toml
 
-# Large model files (Optional)
-# If your .joblib is over 100MB, you should use Git LFS or 
-# host it on Google Drive, but for now, we will leave it out 
-# so it uploads to your repo.
-
-# Node modules
+# Node modules and frontend files
 node_modules/
-
-# Conda environment
-.conda/
-conda-env/
+package-lock.json
+package.json
+edu-pulse-frontend/
 
 # Demo data version file
 .demo_data_version
+
+# Backup files
+app.py.bak
+app.py.impl_backup
+
+# Log files
+treamlit run app.py
