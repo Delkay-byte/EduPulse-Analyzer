@@ -5673,8 +5673,6 @@ def build_briefing_pdf_bytes(scope_df, subject_cols, scope_label, school_sync_df
             )
             ax.set_xlabel("Average Score")
             ax.grid(axis="x", linestyle="--", alpha=0.3)
-            ax.set_ylim(-0.5, len(subject_summary) - 0.5)
-        plt.tight_layout(rect=[0.03, 0.08, 0.97, 0.88])
         add_page_footer(ax)
         pdf.savefig(fig, bbox_inches="tight")
         plt.close(fig)
@@ -5693,7 +5691,6 @@ def build_briefing_pdf_bytes(scope_df, subject_cols, scope_label, school_sync_df
             transform=ax_left.transAxes,
         )
         ax_left.set_ylabel("Student Count")
-        ax_left.set_ylim(0, max(placement_summary.values) * 1.15 if not placement_summary.empty else 1)
 
         if gender_summary.empty:
             ax_right.axis("off")
@@ -5711,8 +5708,6 @@ def build_briefing_pdf_bytes(scope_df, subject_cols, scope_label, school_sync_df
                 transform=ax_right.transAxes,
             )
             ax_right.set_ylabel("Average Subject Score")
-            ax_right.set_ylim(0, max(gender_summary["Average_Subject_Score"].fillna(0)) * 1.15 if not gender_summary.empty else 1)
-        plt.tight_layout(rect=[0.03, 0.08, 0.97, 0.88])
         fig.text(0.02, 0.03, f"Downloaded: {downloaded_at}", fontsize=8.5, color="#475569")
         fig.text(0.98, 0.03, BLOOMCORE_FOOTER_TEXT, fontsize=8.5, color="#0f172a", ha="right")
         pdf.savefig(fig, bbox_inches="tight")
