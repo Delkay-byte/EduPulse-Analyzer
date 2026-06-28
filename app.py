@@ -36,6 +36,79 @@ try:
 except Exception:
     pdfplumber = None
 
+def debug_pdf_extraction(uploaded_file):
+    """
+    Test the PDF extraction strategy without saving to DB.
+    """
+    st.write("### Debugging PDF Extraction")
+
+    parsed_df = bulletproof_waec_parser(uploaded_file)
+    if not parsed_df.empty:
+        st.write(f"Detected {len(parsed_df)} student record(s):")
+        st.dataframe(parsed_df, use_container_width=True)
+    else:
+        st.error("No student records matched the WAEC text pattern.")
+
+
+def bulletproof_waec_parser(uploaded_file):
+    if pdfplumber is None:
+        raise ValueError("pdfplumber is required to extract official WAEC results.")
+
+    if hasattr(uploaded_file, "seek"):
+        uploaded_file.seek(0)
+
+    all_text = ""
+
+    # I am reading the entire PDF, page by page, and dumping it into one massive string.
+    # This completely destroys the concept of "pages" or "tables". It's just raw data now.
+    with pdfplumber.open(uploaded_file) as pdf:
+        for page in pdf.pages:
+            # Adding a newline so words don't mash together when a page ends
+            all_text += (page.extract_text() or "") + "\n"
+
+    # Here is the master pattern. I am telling the regex engine:
+    # 1. Grab exactly 10 digits (\d{10}) -> This is the Index
+    # 2. Grab anything up to the gender -> This is the Name
+    # 3. Grab either Male or Female -> This is the Gender
+    # 4. Grab the date format (dd/mm/yyyy) -> This is the DOB
+    # 5. Grab EVERYTHING else ([\s\S]+?) UNTIL...
+    # 6. ...you see the next 10-digit number. (?=\d{10}|\Z) is a lookahead.
+    pattern = re.compile(
+        r'(\d{10})\s+'            # Group 1: Index Number
+        r'(.+?)\s+'               # Group 2: Name
+        r'(Male|Female)\s+'       # Group 3: Gender
+        r'(\d{2}/\d{2}/\d{4})\s+' # Group 4: DOB
+        r'([\s\S]+?)'             # Group 5: Raw Results (can span multiple lines)
+        r'(?=\d{10}|\Z)',         # Lookahead: Stop exactly before the next index or end of file
+        re.IGNORECASE
+    )
+
+    matches = pattern.findall(all_text)
+
+    cleaned_data = []
+
+    for match in matches:
+        index_num = match[0].strip()
+        name = match[1].strip()
+        gender = match[2].strip()
+        dob = match[3].strip()
+        raw_results = match[4]
+
+        # Now I handle the mess. Because candidate 9 spanned across a page break,
+        # the WAEC page headers got sucked right into the middle of their results.
+        # I need to scrub those specific words out.
+        noise_words = ["INDEX NUMBER", "NAME", "GENDER", "DOB", "RESULTS"]
+        for word in noise_words:
+            raw_results = re.sub(rf'\b{word}\b', '', raw_results, flags=re.IGNORECASE)
+
+        # Finally, I collapse all the weird line breaks in the results string
+        # into a single, clean paragraph.
+        clean_results = " ".join(raw_results.split())
+
+        # I append my clean, perfectly sliced row to the list.
+        cleaned_data.append([index_num, name, gender, dob, clean_results])
+
+    return pd.DataFrame(cleaned_data, columns=["Index", "Name", "Gender", "DOB", "Results"])
 
 # ============================================================
 # 1. APP IDENTITY, FILE PATHS, AND SHARED SCHEMA DEFINITIONS
@@ -2083,6 +2156,63 @@ def build_headteacher_student_template_bytes(school, circuit="", school_type="",
     )
 
 
+def generate_student_data_template(school_name, num_students=1):
+    # Standard columns matching your system schema
+    columns = [
+        'Student_Name', 'Gender', 'Date_of_Birth', 'Attendance_Percent', 
+        'Mathematics_Assignments', 'Mathematics_Term1_Exam', 'Mathematics_Term2_Exam', 'Mathematics_Mock1', 'Mathematics_Mock2',
+        'English_Language_Assignments', 'English_Language_Term1_Exam', 'English_Language_Term2_Exam', 'English_Language_Mock1', 'English_Language_Mock2',
+        'Integrated_Science_Assignments', 'Integrated_Science_Term1_Exam', 'Integrated_Science_Term2_Exam', 'Integrated_Science_Mock1', 'Integrated_Science_Mock2',
+        'Social_Studies_Assignments', 'Social_Studies_Term1_Exam', 'Social_Studies_Term2_Exam', 'Social_Studies_Mock1', 'Social_Studies_Mock2',
+        'ICT_Assignments', 'ICT_Term1_Exam', 'ICT_Term2_Exam', 'ICT_Mock1', 'ICT_Mock2',
+        'RME_Assignments', 'RME_Term1_Exam', 'RME_Term2_Exam', 'RME_Mock1', 'RME_Mock2',
+        'BDT_Assignments', 'BDT_Term1_Exam', 'BDT_Term2_Exam', 'BDT_Mock1', 'BDT_Mock2',
+        'Creative_Arts_Assignments', 'Creative_Arts_Term1_Exam', 'Creative_Arts_Term2_Exam', 'Creative_Arts_Mock1', 'Creative_Arts_Mock2',
+        'French_Assignments', 'French_Term1_Exam', 'French_Term2_Exam', 'French_Mock1', 'French_Mock2',
+        'Arabic_Assignments', 'Arabic_Term1_Exam', 'Arabic_Term2_Exam', 'Arabic_Mock1', 'Arabic_Mock2',
+        'Ewe_Assignments', 'Ewe_Term1_Exam', 'Ewe_Term2_Exam', 'Ewe_Mock1', 'Ewe_Mock2'
+    ]
+    
+    # Force safe integer conversion
+    try:
+        row_count = max(1, int(num_students))
+    except (ValueError, TypeError):
+        row_count = 1
+
+    # Create the DataFrame with the exact requested number of rows
+    df = pd.DataFrame(index=range(row_count), columns=columns)
+    
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        # Data starts on row 3 (0-indexed row 2) to leave space for custom banner
+        df.to_excel(writer, index=False, sheet_name='Student_Data', startrow=2)
+        
+        workbook  = writer.book
+        worksheet = writer.sheets['Student_Data']
+        
+        header_fmt = workbook.add_format({
+            'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter',
+            'font_color': '#FFFFFF', 'bg_color': '#111827'
+        })
+        
+        footer_fmt = workbook.add_format({
+            'font_size': 9, 'font_color': '#6B7280', 'italic': True
+        })
+
+        worksheet.merge_range('A1:K2', f"{school_name.upper()} - OFFICIAL DATA ENTRY TEMPLATE", header_fmt)
+        
+        # Add warning messages at the bottom safely out of the way
+        warn_row = row_count + 5
+        worksheet.write(f'A{warn_row}', "© 2026 Powered by BloomCore Technologies | EduPulse System", footer_fmt)
+        worksheet.write(f'A{warn_row+1}', "CRITICAL WARNING: DO NOT ALTER OR RENAME THE COLUMN HEADERS IN ROW 3.", footer_fmt)
+
+        # Set column width so the file looks readable upon opening
+        for i, col in enumerate(columns):
+            worksheet.set_column(i, i, 23)
+
+    return output.getvalue()
+
+
 def clean_uploaded_dataframe(df):
     cleaned_df = df.copy()
     cleaned_df.columns = [str(column).replace("\ufeff", "").strip() for column in cleaned_df.columns]
@@ -2850,6 +2980,12 @@ def render_sidebar(df, subject_cols, role, school):
             st.write("**💎 DIAMOND**: Great potential (60-69%). Needs a small push.")
             st.write("**📈 STEADY**: Average (50-59%). Needs to avoid falling.")
             st.write("**⚠️ CRITICAL**: Below 50%. Needs urgent intervention.")
+
+        with st.sidebar.expander("🛠️ Developer Debug Tools"):
+            st.write("Test PDF table extraction here:")
+            uploaded_pdf = st.file_uploader("Upload WAEC PDF", type=["pdf"])
+            if uploaded_pdf:
+                debug_pdf_extraction(uploaded_pdf)
 
         if st.button("Refresh Dashboard", key="refresh_dashboard", use_container_width=True):
             st.cache_data.clear()
@@ -3641,49 +3777,26 @@ def clean_waec_text_block(full_text):
 
 def extract_waec_pdf_rows(pdf_bytes, fallback_school_name=""):
     if pdfplumber is None:
-        raise ValueError("pdfplumber is not installed. Please install it to process PDF files.")
+        raise ValueError("pdfplumber is required to extract official WAEC results.")
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         school_name = extract_waec_school_name(pdf) or Path(fallback_school_name).stem.replace("_", " ").strip()
 
-        raw_text = ""
-        for page in pdf.pages:
-            text = page.extract_text(x_tolerance=2, y_tolerance=3)
-            if text:
-                raw_text += text + "\n"
+    parsed_df = bulletproof_waec_parser(io.BytesIO(pdf_bytes))
+    students = []
+    for _, row in parsed_df.iterrows():
+        students.append({
+            "Student_ID": str(row["Index"]).strip(),
+            "Student_Name": str(row["Name"]).strip().upper(),
+            "Gender": normalize_gender_token(row["Gender"]),
+            "Date_of_Birth": normalize_date_of_birth(row["DOB"]),
+            "Official_Results_Raw": str(row["Results"]).strip(),
+        })
 
-        if not raw_text.strip():
-            raise ValueError("No readable text found in the uploaded WAEC PDF.")
+    if not students:
+        raise ValueError("Failed to resolve records. Verify the document is an unedited official layout.")
 
-        # 1. Apply the master cleaner to remove all page-break interruptions
-        mega_string = clean_waec_text_block(raw_text)
-
-        # 2. Split the mega string precisely at every 10-digit WAEC index number
-        blocks = re.split(r'(?=\b\d{10}\b)', mega_string)
-
-        students = []
-        # Regex captures: ID (1), Name (2), Gender (3), DOB (4), and Results (5)
-        pattern = re.compile(r'^(\d{10})\s+(.*?)\s+(Male|Female)\s+(\d{2}/\d{2}/\d{4})\s+(.*)$', re.IGNORECASE)
-
-        for block in blocks:
-            block = block.strip()
-            if not block:
-                continue
-
-            match = pattern.search(block)
-            if match:
-                students.append({
-                    "Student_ID": match.group(1).strip(),
-                    "Student_Name": match.group(2).strip(),
-                    "Gender": normalize_gender_token(match.group(3).strip()),
-                    "Date_of_Birth": normalize_date_of_birth(match.group(4).strip()),
-                    "Official_Results_Raw": match.group(5).strip(),
-                })
-
-        if not students:
-            raise ValueError("Could not parse any student data. The document layout could not be resolved.")
-
-        return school_name, students
+    return school_name, students
 
 
 SUBJECT_ALIASES = {
@@ -4572,10 +4685,10 @@ def render_headteacher_bulk_upload(school, key_prefix, redirect_to_login=False):
             st.write("")
             st.write("")
             try:
-                excel_bytes = build_headteacher_student_template_bytes(school, school_circuit, school_type, num_students=int(num_students))
+                template_bytes = generate_student_data_template(school, num_students)
                 st.download_button(
                     f"📥 Download {school} Template ({int(num_students)} rows)",
-                    excel_bytes,
+                    template_bytes,
                     file_name=f"edupulse_{school.lower().replace(' ', '_')}_template.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key=f"{key_prefix}_download_csv",
