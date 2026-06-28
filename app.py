@@ -148,6 +148,113 @@ NOTIFICATION_COLUMNS = [
 ]
 BLOOMCORE_FOOTER_TEXT = "Powered by BloomCore Technologies"
 HEADTEACHER_TEMPLATE_ROWS = 250
+DEMO_MODE = True  # Set to False to enable normal authentication
+
+
+# ============================================================
+# DEMO MODE DATA GENERATION
+# ============================================================
+def initialize_demo_data():
+    """Generate sample data for demo/recruiter mode."""
+    import random
+    from datetime import datetime, timedelta
+    
+    # Sample circuits and schools
+    circuits_data = [
+        ("Akatsi South Circuit", "St. Mary's JHS", "Public"),
+        ("Akatsi South Circuit", "Awasive JHS", "Public"),
+        ("Akatsi South Circuit", "Zongo JHS", "Public"),
+        ("Akatsi North Circuit", "DA JHS", "Public"),
+        ("Akatsi North Circuit", "Kpetsu JHS", "Public"),
+        ("Akatsi North Circuit", "Wute JHS", "Public"),
+        ("Keta Circuit", "Anlo Awo JHS", "Public"),
+        ("Keta Circuit", "Keta JHS", "Public"),
+        ("Ketu North Circuit", "Dzodze JHS", "Public"),
+        ("Ketu South Circuit", "Aflao JHS", "Public"),
+        ("Ketu South Circuit", "Tadzewu JHS", "Public"),
+        ("Ketu South Circuit", "Dzorkpe JHS", "Public"),
+    ]
+    
+    # Create circuits CSV
+    circuits_df = pd.DataFrame(circuits_data, columns=EXPECTED_CIRCUIT_COLUMNS)
+    write_dataframe_to_csv(circuits_df, CIRCUITS_FILE, EXPECTED_CIRCUIT_COLUMNS)
+    
+    # Generate student data
+    first_names = ["Kwame", "Ama", "Kofi", "Abena", "Kojo", "Akosua", "Yaw", "Yaa", "Kwabena", "Afia", 
+                   "Emmanuel", "Grace", "Samuel", "Esther", "Daniel", "Rebecca", "David", "Ruth", "Joseph", "Hannah"]
+    last_names = ["Mensah", "Owusu", "Agyeman", "Boateng", "Amponsah", "Osei", "Addo", "Dankwa", "Mills", "Nkrumah",
+                  "Akufo", "Mahama", "Rawlings", "Kufuor", "Amissah", "Ofori", "Asante", "Frimpong", "Owusu-Ansah", "Gyasi"]
+    
+    student_data = []
+    student_id_counter = 1
+    
+    for school_name, circuit, school_type in circuits_data:
+        num_students = random.randint(15, 25)
+        for i in range(num_students):
+            student_id = f"GH{datetime.now().year}{str(student_id_counter).zfill(6)}"
+            student_id_counter += 1
+            
+            first_name = random.choice(first_names)
+            last_name = random.choice(last_names)
+            student_name = f"{first_name} {last_name}"
+            
+            gender = random.choice(["Male", "Female"])
+            
+            # Random DOB between 2008-2011 (typical JHS 3 age)
+            dob_year = random.randint(2008, 2011)
+            dob_month = random.randint(1, 12)
+            dob_day = random.randint(1, 28)
+            dob = f"{dob_day:02d}/{dob_month:02d}/{dob_year}"
+            
+            attendance = round(random.uniform(70, 100), 1)
+            
+            # Generate random scores for subjects
+            subjects = ["Mathematics", "English_Language", "Integrated_Science", "Social_Studies", 
+                       "ICT", "RME", "BDT", "Creative_Arts", "French", "Ewe"]
+            student_row = {
+                "Student_ID": student_id,
+                "Student_Name": student_name,
+                "Gender": gender,
+                "Date_of_Birth": dob,
+                "Attendance_Percent": attendance,
+                "School_Name": school_name,
+                "Circuit": circuit,
+                "School_Type": school_type,
+            }
+            
+            for subject in subjects:
+                # Assignments, Term1, Term2, Mock1, Mock2
+                for metric in ["Assignments", "Term1_Exam", "Term2_Exam", "Mock1", "Mock2"]:
+                    score = random.randint(40, 100)
+                    student_row[f"{subject}_{metric}"] = score
+            
+            student_data.append(student_row)
+    
+    # Create student CSV with expected columns
+    student_df = pd.DataFrame(student_data)
+    student_df = student_df.reindex(columns=EXPECTED_DATA_COLUMNS)
+    write_dataframe_to_csv(student_df, DATA_FILE, EXPECTED_DATA_COLUMNS)
+    
+    # Create demo director user
+    demo_users = pd.DataFrame([{
+        "username": "demo_director",
+        "password": "demo123",  # Will be hashed
+        "role": "Director",
+        "school": "",
+        "district": "Akatsi Municipal",
+        "security_key": "DEMO2026",
+        "email": "demo@edupulse.gh",
+        "security_question": "What is the demo purpose?",
+        "security_answer": "recruiter"
+    }], columns=USERS_COLUMNS)
+    
+    # Hash the password
+    demo_users["password"] = demo_users["password"].apply(hash_password)
+    write_dataframe_to_csv(demo_users, USERS_FILE, USERS_COLUMNS)
+    
+    return True
+
+
 SMTP_CONFIG_FIELDS = [
     "smtp_host",
     "smtp_port",
@@ -7152,6 +7259,55 @@ def headteacher_portal(df, subject_cols, school):
 
 def main():
     init_session_state()
+
+    # DEMO MODE: Bypass authentication and initialize sample data
+    if DEMO_MODE:
+        # Initialize demo data if files don't exist
+        if not os.path.isfile(CIRCUITS_FILE) or not os.path.isfile(DATA_FILE):
+            with st.spinner("Initializing demo data..."):
+                initialize_demo_data()
+                st.cache_data.clear()
+        
+        # Auto-login as demo director
+        if not st.session_state["logged_in"]:
+            st.session_state.update({
+                "logged_in": True,
+                "current_user": "demo_director",
+                "user_role": "Director",
+                "user_school": "",
+                "user_district": "Akatsi Municipal",
+            })
+            st.rerun()
+        
+        # Demo mode role switcher in sidebar
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🎮 Demo Mode Controls")
+        demo_role = st.sidebar.radio(
+            "Switch Role",
+            ["Director", "Headteacher"],
+            key="demo_role_switcher"
+        )
+        
+        if demo_role == "Headteacher":
+            # Load available schools from circuits
+            circuits_df = load_circuit_mapping_df()
+            if not circuits_df.empty:
+                available_schools = circuits_df["School_Name"].unique().tolist()
+                selected_school = st.sidebar.selectbox(
+                    "Select School",
+                    available_schools,
+                    key="demo_school_selector"
+                )
+                st.session_state["user_role"] = "Headteacher"
+                st.session_state["user_school"] = selected_school
+            else:
+                st.sidebar.warning("No schools available in demo data")
+                st.session_state["user_role"] = "Director"
+        else:
+            st.session_state["user_role"] = "Director"
+            st.session_state["user_school"] = ""
+        
+        st.sidebar.info("💡 Demo Mode: No authentication required")
 
     if not st.session_state["logged_in"]:
         login_ui()
