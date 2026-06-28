@@ -149,6 +149,34 @@ NOTIFICATION_COLUMNS = [
 BLOOMCORE_FOOTER_TEXT = "Powered by BloomCore Technologies"
 HEADTEACHER_TEMPLATE_ROWS = 250
 DEMO_MODE = True  # Set to False to enable normal authentication
+DEMO_DISTRICT = "Akatsi Municipal"
+DEMO_DATA_VERSION = 2
+DEMO_VERSION_FILE = ".demo_data_version"
+
+
+def should_refresh_demo_data():
+    if not os.path.isfile(CIRCUITS_FILE) or not os.path.isfile(DATA_FILE):
+        return True
+    if not os.path.isfile(DEMO_VERSION_FILE):
+        return True
+    try:
+        with open(DEMO_VERSION_FILE, encoding="utf-8") as handle:
+            return int(handle.read().strip()) < DEMO_DATA_VERSION
+    except (ValueError, OSError):
+        return True
+
+
+def mark_demo_data_fresh():
+    with open(DEMO_VERSION_FILE, "w", encoding="utf-8") as handle:
+        handle.write(str(DEMO_DATA_VERSION))
+
+
+def write_demo_csv(df, path, columns):
+    safe_df = df.copy()
+    for column in columns:
+        if column not in safe_df.columns:
+            safe_df[column] = ""
+    safe_df[columns].fillna("").to_csv(path, index=False)
 
 
 # ============================================================
@@ -156,102 +184,274 @@ DEMO_MODE = True  # Set to False to enable normal authentication
 # ============================================================
 def initialize_demo_data():
     """Generate sample data for demo/recruiter mode."""
-    import random
-    from datetime import datetime, timedelta
-    
-    # Sample circuits and schools
+    from datetime import timedelta
+
+    random.seed(20260628)
+
     circuits_data = [
         ("Akatsi South Circuit", "St. Mary's JHS", "Public"),
         ("Akatsi South Circuit", "Awasive JHS", "Public"),
         ("Akatsi South Circuit", "Zongo JHS", "Public"),
+        ("Akatsi South Circuit", "Kpeve JHS", "Public"),
+        ("Akatsi South Circuit", "Wute D/A JHS", "Public"),
         ("Akatsi North Circuit", "DA JHS", "Public"),
         ("Akatsi North Circuit", "Kpetsu JHS", "Public"),
         ("Akatsi North Circuit", "Wute JHS", "Public"),
+        ("Akatsi North Circuit", "Agorkpo JHS", "Public"),
         ("Keta Circuit", "Anlo Awo JHS", "Public"),
         ("Keta Circuit", "Keta JHS", "Public"),
+        ("Keta Circuit", "Kedzi JHS", "Public"),
+        ("Keta Circuit", "Anyako JHS", "Public"),
         ("Ketu North Circuit", "Dzodze JHS", "Public"),
+        ("Ketu North Circuit", "Penyi JHS", "Public"),
+        ("Ketu North Circuit", "Wuti JHS", "Public"),
         ("Ketu South Circuit", "Aflao JHS", "Public"),
         ("Ketu South Circuit", "Tadzewu JHS", "Public"),
         ("Ketu South Circuit", "Dzorkpe JHS", "Public"),
+        ("Ketu South Circuit", "Denu JHS", "Public"),
     ]
-    
-    # Create circuits CSV
-    circuits_df = pd.DataFrame(circuits_data, columns=EXPECTED_CIRCUIT_COLUMNS)
-    write_dataframe_to_csv(circuits_df, CIRCUITS_FILE, EXPECTED_CIRCUIT_COLUMNS)
-    
-    # Generate student data
-    first_names = ["Kwame", "Ama", "Kofi", "Abena", "Kojo", "Akosua", "Yaw", "Yaa", "Kwabena", "Afia", 
-                   "Emmanuel", "Grace", "Samuel", "Esther", "Daniel", "Rebecca", "David", "Ruth", "Joseph", "Hannah"]
-    last_names = ["Mensah", "Owusu", "Agyeman", "Boateng", "Amponsah", "Osei", "Addo", "Dankwa", "Mills", "Nkrumah",
-                  "Akufo", "Mahama", "Rawlings", "Kufuor", "Amissah", "Ofori", "Asante", "Frimpong", "Owusu-Ansah", "Gyasi"]
-    
+    circuits_df = pd.DataFrame(
+        [{"School_Name": school, "Circuit": circuit, "School_Type": school_type} for circuit, school, school_type in circuits_data]
+    )
+    write_demo_csv(circuits_df, CIRCUITS_FILE, EXPECTED_CIRCUIT_COLUMNS)
+
+    first_names = [
+        "Kwame", "Ama", "Kofi", "Abena", "Kojo", "Akosua", "Yaw", "Yaa", "Kwabena", "Afia",
+        "Emmanuel", "Grace", "Samuel", "Esther", "Daniel", "Rebecca", "David", "Ruth", "Joseph", "Hannah",
+    ]
+    last_names = [
+        "Mensah", "Owusu", "Agyeman", "Boateng", "Amponsah", "Osei", "Addo", "Dankwa", "Mills", "Nkrumah",
+        "Akufo", "Mahama", "Rawlings", "Kufuor", "Amissah", "Ofori", "Asante", "Frimpong", "Owusu-Ansah", "Gyasi",
+    ]
+    headteacher_names = [
+        "Grace Mensah", "Samuel Owusu", "Esther Agyeman", "Daniel Boateng", "Rebecca Amponsah",
+        "Joseph Osei", "Hannah Addo", "David Dankwa", "Ruth Mills", "Emmanuel Nkrumah",
+        "Ama Frimpong", "Kofi Gyasi", "Abena Asante", "Kwame Ofori", "Akosua Amissah",
+        "Yaw Kufuor", "Yaa Rawlings", "Kwabena Mahama", "Afia Akufo", "Kojo Boaten",
+    ]
+
     student_data = []
     student_id_counter = 1
-    
-    for school_name, circuit, school_type in circuits_data:
-        num_students = random.randint(15, 25)
-        for i in range(num_students):
+    school_student_counts = {}
+
+    for circuit, school_name, school_type in circuits_data:
+        num_students = random.randint(18, 24)
+        school_student_counts[school_name] = num_students
+        for _ in range(num_students):
             student_id = f"GH{datetime.now().year}{str(student_id_counter).zfill(6)}"
             student_id_counter += 1
-            
-            first_name = random.choice(first_names)
-            last_name = random.choice(last_names)
-            student_name = f"{first_name} {last_name}"
-            
-            gender = random.choice(["Male", "Female"])
-            
-            # Random DOB between 2008-2011 (typical JHS 3 age)
+            student_name = f"{random.choice(first_names)} {random.choice(last_names)}"
+            gender = random.choice(["M", "F"])
             dob_year = random.randint(2008, 2011)
-            dob_month = random.randint(1, 12)
-            dob_day = random.randint(1, 28)
-            dob = f"{dob_day:02d}/{dob_month:02d}/{dob_year}"
-            
-            attendance = round(random.uniform(70, 100), 1)
-            
-            # Generate random scores for subjects
-            subjects = ["Mathematics", "English_Language", "Integrated_Science", "Social_Studies", 
-                       "ICT", "RME", "BDT", "Creative_Arts", "French", "Ewe"]
-            student_row = {
-                "Student_ID": student_id,
-                "Student_Name": student_name,
-                "Gender": gender,
-                "Date_of_Birth": dob,
-                "Attendance_Percent": attendance,
-                "School_Name": school_name,
-                "Circuit": circuit,
-                "School_Type": school_type,
-            }
-            
-            for subject in subjects:
-                # Assignments, Term1, Term2, Mock1, Mock2
-                for metric in ["Assignments", "Term1_Exam", "Term2_Exam", "Mock1", "Mock2"]:
-                    score = random.randint(40, 100)
-                    student_row[f"{subject}_{metric}"] = score
-            
+            dob = f"{random.randint(1, 28):02d}/{random.randint(1, 12):02d}/{dob_year}"
+            attendance = round(random.uniform(72, 99), 1)
+
+            student_row = {column: pd.NA for column in EXPECTED_DATA_COLUMNS}
+            student_row.update(
+                {
+                    "Internal_Tracking_ID": f"TRK-{student_id}",
+                    "Student_ID": student_id,
+                    "Student_Name": student_name,
+                    "Gender": gender,
+                    "Date_of_Birth": dob,
+                    "Attendance_Percent": attendance,
+                    "School_Name": school_name,
+                    "Circuit": circuit,
+                    "School_Type": school_type,
+                }
+            )
+
+            mock2_scores = []
+            for prefix in SUBJECT_PREFIXES:
+                base_score = random.randint(42, 96)
+                for suffix in ASSESSMENT_SUFFIXES:
+                    drift = random.randint(-8, 8)
+                    student_row[f"{prefix}_{suffix}"] = max(35, min(100, base_score + drift))
+                predicted_score = round(
+                    float(
+                        pd.to_numeric(
+                            pd.Series([student_row.get(f"{prefix}_{suffix}") for suffix in ASSESSMENT_SUFFIXES]),
+                            errors="coerce",
+                        ).mean()
+                    ),
+                    1,
+                )
+                student_row[f"{prefix}{PREDICTED_SUFFIX}"] = predicted_score
+                mock2_scores.append(safe_float(student_row.get(f"{prefix}_Mock2"), predicted_score))
+                if random.random() < 0.22:
+                    student_row[f"{prefix}{FINAL_SUFFIX}"] = round(
+                        predicted_score + random.uniform(-6, 6),
+                        1,
+                    )
+
+            math_mock1 = safe_float(student_row.get("Mathematics_Mock1"), 50.0)
+            math_mock2 = safe_float(student_row.get("Mathematics_Mock2"), 50.0)
+            math_assign = safe_float(student_row.get("Mathematics_Assignments"), 50.0)
+            student_row["Math_Improvement"] = round(math_mock2 - math_mock1, 1)
+            student_row["Math_Consistency"] = round(math_assign - math_mock2, 1)
+            student_row["Action_Zone"] = action_zone_from_average(sum(mock2_scores) / len(mock2_scores))
             student_data.append(student_row)
-    
-    # Create student CSV with expected columns
-    student_df = pd.DataFrame(student_data)
-    student_df = student_df.reindex(columns=EXPECTED_DATA_COLUMNS)
-    write_dataframe_to_csv(student_df, DATA_FILE, EXPECTED_DATA_COLUMNS)
-    
-    # Create demo director user
-    demo_users = pd.DataFrame([{
-        "username": "demo_director",
-        "password": "demo123",  # Will be hashed
-        "role": "Director",
-        "school": "",
-        "district": "Akatsi Municipal",
-        "security_key": "DEMO2026",
-        "email": "demo@edupulse.gh",
-        "security_question": "What is the demo purpose?",
-        "security_answer": "recruiter"
-    }], columns=USERS_COLUMNS)
-    
-    # Hash the password
+
+    student_df = pd.DataFrame(student_data).reindex(columns=EXPECTED_DATA_COLUMNS)
+    write_demo_csv(student_df, DATA_FILE, EXPECTED_DATA_COLUMNS)
+
+    demo_users = pd.DataFrame(
+        [
+            {
+                "username": "demo_director",
+                "password": "demo123",
+                "role": "Director",
+                "school": "",
+                "district": DEMO_DISTRICT,
+                "security_key": "DEMO2026",
+                "email": "demo@edupulse.gh",
+                "security_question": "What is the demo purpose?",
+                "security_answer": "recruiter",
+            }
+        ],
+        columns=USERS_COLUMNS,
+    )
     demo_users["password"] = demo_users["password"].apply(hash_password)
-    write_dataframe_to_csv(demo_users, USERS_FILE, USERS_COLUMNS)
-    
+    write_demo_csv(demo_users, USERS_FILE, USERS_COLUMNS)
+
+    alert_schools = [
+        ("St. Mary's JHS", "Akatsi South Circuit"),
+        ("Awasive JHS", "Akatsi South Circuit"),
+        ("DA JHS", "Akatsi North Circuit"),
+        ("Keta JHS", "Keta Circuit"),
+        ("Dzodze JHS", "Ketu North Circuit"),
+    ]
+    notifications_data = []
+    for index, (school, circuit) in enumerate(alert_schools):
+        notifications_data.append(
+            {
+                "notification_id": f"notif-demo-{index + 1:02d}",
+                "created_at": (datetime.now() - timedelta(hours=index + 1)).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "district": DEMO_DISTRICT,
+                "target_role": "Director",
+                "event_type": "student_bulk_sync",
+                "created_by": "demo_director",
+                "school": school,
+                "circuit": circuit,
+                "student_id": "",
+                "student_name": "",
+                "message": (
+                    f"Bulk student CSV synced by Headteacher upload for {school}: "
+                    f"{school_student_counts.get(school, random.randint(18, 24))} student row(s) synced in {circuit}."
+                ),
+                "status": "Unread",
+            }
+        )
+    write_demo_csv(pd.DataFrame(notifications_data, columns=NOTIFICATION_COLUMNS), NOTIFICATIONS_FILE, NOTIFICATION_COLUMNS)
+
+    contacts_data = []
+    for index, (circuit, school_name, _) in enumerate(circuits_data):
+        contacts_data.append(
+            {
+                "district": DEMO_DISTRICT,
+                "school": school_name,
+                "contact_name": headteacher_names[index % len(headteacher_names)],
+                "role": "Headteacher",
+                "email": f"head.{slugify_name(school_name).lower()}@demo.edupulse.gh",
+                "phone": f"+23320{random.randint(1000000, 9999999)}",
+                "whatsapp_number": f"+23324{random.randint(1000000, 9999999)}",
+                "preferred_channel": "WhatsApp",
+                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
+            }
+        )
+    write_demo_csv(pd.DataFrame(contacts_data, columns=CONTACT_COLUMNS), CONTACTS_FILE, CONTACT_COLUMNS)
+
+    manual_predictions = []
+    placement_samples = [
+        ("Category A", 12, 420),
+        ("Category A", 14, 405),
+        ("Category B", 18, 380),
+        ("Category B", 20, 365),
+        ("Category C", 24, 340),
+        ("Category C", 28, 320),
+    ]
+    for index, sample_row in enumerate(student_df.sample(min(18, len(student_df)), random_state=42).itertuples(index=False)):
+        aggregate, best_six_raw_total = placement_samples[index % len(placement_samples)][1:]
+        placement_category = placement_samples[index % len(placement_samples)][0]
+        manual_predictions.append(
+            {
+                "prediction_id": f"manual-demo-{index + 1:02d}",
+                "created_at": (datetime.now() - timedelta(days=index)).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "district": DEMO_DISTRICT,
+                "school": sample_row.School_Name,
+                "circuit": sample_row.Circuit,
+                "school_type": sample_row.School_Type,
+                "student_id": sample_row.Student_ID,
+                "student_name": sample_row.Student_Name,
+                "aggregate": aggregate,
+                "best_six_raw_total": best_six_raw_total,
+                "placement": f"{placement_category} school outlook",
+                "placement_category": placement_category,
+                "created_by": "demo_director",
+            }
+        )
+    write_demo_csv(
+        pd.DataFrame(manual_predictions, columns=MANUAL_PREDICTION_COLUMNS),
+        MANUAL_PREDICTIONS_FILE,
+        MANUAL_PREDICTION_COLUMNS,
+    )
+
+    scenario_rows = []
+    for index, sample_row in enumerate(student_df.sample(min(8, len(student_df)), random_state=7).itertuples(index=False)):
+        current_outcome = compute_student_outcome_details(sample_row._asdict(), FINAL_SUBJECT_COLUMNS)
+        predicted_aggregate = max(6, current_outcome["aggregate"] - random.randint(1, 4))
+        predicted_payload = []
+        for subject_col in FINAL_SUBJECT_COLUMNS:
+            predicted_score = safe_float(sample_row._asdict().get(subject_col.replace(FINAL_SUFFIX, PREDICTED_SUFFIX)), 55.0) + random.randint(2, 8)
+            predicted_payload.append(
+                {
+                    "subject_col": subject_col,
+                    "Subject": format_subject_name(subject_col),
+                    "Predicted Score": round(predicted_score, 1),
+                }
+            )
+        scenario_rows.append(
+            {
+                "scenario_id": f"scenario-demo-{index + 1:02d}",
+                "created_at": (datetime.now() - timedelta(days=index + 2)).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "district": DEMO_DISTRICT,
+                "school": sample_row.School_Name,
+                "circuit": sample_row.Circuit,
+                "internal_tracking_id": sample_row.Internal_Tracking_ID,
+                "student_id": sample_row.Student_ID,
+                "official_index_number": "",
+                "student_name": sample_row.Student_Name,
+                "scenario_name": "Focused improvement plan",
+                "intervention_note": "Weekly attendance follow-up and Saturday revision clinic.",
+                "current_attendance": f"{safe_float(sample_row.Attendance_Percent, 80.0):.1f}",
+                "target_attendance": "95.0",
+                "current_assignment": "62.0",
+                "target_assignment": "75.0",
+                "current_mock": "58.0",
+                "target_mock": "72.0",
+                "current_aggregate": f"{current_outcome['aggregate']:.1f}",
+                "predicted_aggregate": f"{predicted_aggregate:.1f}",
+                "current_placement": current_outcome["placement_outlook"],
+                "predicted_placement": predict_placement(predicted_aggregate, best_six_raw_total=current_outcome["best_six_raw_total"]),
+                "current_best_six_raw_total": f"{current_outcome['best_six_raw_total']:.1f}",
+                "predicted_best_six_raw_total": f"{current_outcome['best_six_raw_total'] + random.randint(8, 18):.1f}",
+                "current_raw_average": f"{current_outcome['raw_average']:.1f}",
+                "predicted_raw_average": f"{current_outcome['raw_average'] + random.uniform(2, 6):.1f}",
+                "best_two_electives": current_outcome["best_two_subject_names"],
+                "prediction_payload_json": json.dumps(predicted_payload),
+            }
+        )
+    write_demo_csv(pd.DataFrame(scenario_rows, columns=SCENARIO_COLUMNS), SCENARIOS_FILE, SCENARIO_COLUMNS)
+
+    save_app_config(
+        {
+            **load_app_config(),
+            "district_name": DEMO_DISTRICT,
+            "director_username": "demo_director",
+            "headteacher_security_key": "DEMO-2026",
+        }
+    )
+    mark_demo_data_fresh()
     return True
 
 
@@ -3016,8 +3216,6 @@ def render_sidebar(df, subject_cols, role, school):
     )
 
     with st.sidebar:
-        if os.path.isfile(BRAND_IMAGE):
-            st.image(BRAND_IMAGE, use_container_width=True)
         st.markdown(
             f"""
             <div class="sidebar-brand-card">
@@ -3087,12 +3285,6 @@ def render_sidebar(df, subject_cols, role, school):
             st.write("**💎 DIAMOND**: Great potential (60-69%). Needs a small push.")
             st.write("**📈 STEADY**: Average (50-59%). Needs to avoid falling.")
             st.write("**⚠️ CRITICAL**: Below 50%. Needs urgent intervention.")
-
-        with st.sidebar.expander("🛠️ Developer Debug Tools"):
-            st.write("Test PDF table extraction here:")
-            uploaded_pdf = st.file_uploader("Upload WAEC PDF", type=["pdf"])
-            if uploaded_pdf:
-                debug_pdf_extraction(uploaded_pdf)
 
         if st.button("Refresh Dashboard", key="refresh_dashboard", use_container_width=True):
             st.cache_data.clear()
@@ -6823,6 +7015,62 @@ def render_manual_grade_predictor(school):
     render_scroll_to_top()
 
 
+def render_predictor_scope_overview(display_df, subject_cols, key_prefix):
+    agg_df = build_aggregate_dataframe(display_df, subject_cols)
+    if agg_df.empty:
+        return
+
+    st.markdown("#### Forecast Overview")
+    st.caption("District-wide placement pressure before you choose a student for a live ML scenario.")
+
+    overview_cols = st.columns(2)
+    with overview_cols[0]:
+        fig_aggregate = px.histogram(
+            agg_df,
+            x="Aggregate",
+            color="Circuit",
+            nbins=18,
+            title="Aggregate Distribution by Circuit",
+            labels={"Aggregate": "Best 6 Aggregate"},
+        )
+        st.plotly_chart(fig_aggregate, use_container_width=True, key=f"{key_prefix}_overview_aggregate")
+
+    with overview_cols[1]:
+        circuit_pass = (
+            agg_df.groupby("Circuit", as_index=False)
+            .agg(Pass_Rate=("Passed", "mean"), Students=("Passed", "count"))
+            .sort_values("Pass_Rate", ascending=False)
+        )
+        circuit_pass["Pass_Rate"] = circuit_pass["Pass_Rate"] * 100
+        fig_pass = px.bar(
+            circuit_pass,
+            x="Circuit",
+            y="Pass_Rate",
+            title="Pass Rate by Circuit (%)",
+            text_auto=".1f",
+            color="Pass_Rate",
+            color_continuous_scale="Greens",
+        )
+        st.plotly_chart(fig_pass, use_container_width=True, key=f"{key_prefix}_overview_pass")
+
+    placement_counts = (
+        agg_df.groupby(["Circuit", "Placement_Category"], as_index=False)
+        .size()
+        .rename(columns={"size": "Student Count"})
+    )
+    fig_placement = px.bar(
+        placement_counts,
+        x="Circuit",
+        y="Student Count",
+        color="Placement_Category",
+        title="CSSPS Placement Forecast by Circuit",
+        barmode="stack",
+        category_orders={"Placement_Category": PLACEMENT_ORDER},
+    )
+    st.plotly_chart(fig_placement, use_container_width=True, key=f"{key_prefix}_overview_placement")
+    st.markdown("---")
+
+
 def render_student_predictor(display_df, subject_cols, key_prefix):
     # This workspace compares current student performance with a
     # scenario-driven ML projection and lets staff save the scenario.
@@ -6836,6 +7084,8 @@ def render_student_predictor(display_df, subject_cols, key_prefix):
         st.warning("No BECE subject columns were found for prediction.")
         render_scroll_to_top()
         return
+
+    render_predictor_scope_overview(display_df, subject_cols, key_prefix)
 
     working_df = display_df.copy()
     if "Search_Label" not in working_df.columns and {"Student_Name", "Student_ID"}.issubset(working_df.columns):
@@ -7262,25 +7512,24 @@ def main():
 
     # DEMO MODE: Bypass authentication and initialize sample data
     if DEMO_MODE:
-        # Initialize demo data if files don't exist
-        if not os.path.isfile(CIRCUITS_FILE) or not os.path.isfile(DATA_FILE):
+        if should_refresh_demo_data():
             with st.spinner("Initializing demo data..."):
                 initialize_demo_data()
                 st.cache_data.clear()
-        
-        # Auto-login as demo director
+
         if not st.session_state["logged_in"]:
             st.session_state.update({
                 "logged_in": True,
                 "current_user": "demo_director",
                 "user_role": "Director",
                 "user_school": "",
-                "user_district": "Akatsi Municipal",
+                "user_district": DEMO_DISTRICT,
             })
             st.rerun()
-        
-        # Demo mode role switcher in sidebar
+
         st.sidebar.markdown("---")
+        if os.path.isfile(BRAND_IMAGE):
+            st.sidebar.image(BRAND_IMAGE, use_container_width=True)
         st.sidebar.subheader("🎮 Demo Mode Controls")
         demo_role = st.sidebar.radio(
             "Switch Role",
@@ -7348,4 +7597,14 @@ def main():
         st.error("Unknown account role. Please contact the district/municipal administrator.")
 
 
-main()
+def _streamlit_is_running():
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        return get_script_run_ctx() is not None
+    except Exception:
+        return False
+
+
+if _streamlit_is_running() or __name__ == "__main__":
+    main()

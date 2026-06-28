@@ -1,0 +1,19 @@
+prediction_id,created_at,district,school,circuit,school_type,student_id,student_name,aggregate,best_six_raw_total,placement,placement_category,created_by
+manual-demo-01,2026-06-28 12:27:17 UTC,Akatsi Municipal,Zongo JHS,Akatsi South Circuit,Public,GH2026000056,Esther Mahama,12,420,Category A school outlook,Category A,demo_director
+manual-demo-02,2026-06-27 12:27:17 UTC,Akatsi Municipal,Kpetsu JHS,Akatsi North Circuit,Public,GH2026000141,Samuel Mahama,14,405,Category A school outlook,Category A,demo_director
+manual-demo-03,2026-06-26 12:27:17 UTC,Akatsi Municipal,Agorkpo JHS,Akatsi North Circuit,Public,GH2026000176,Yaw Amissah,18,380,Category B school outlook,Category B,demo_director
+manual-demo-04,2026-06-25 12:27:17 UTC,Akatsi Municipal,Zongo JHS,Akatsi South Circuit,Public,GH2026000057,Kofi Boateng,20,365,Category B school outlook,Category B,demo_director
+manual-demo-05,2026-06-24 12:27:17 UTC,Akatsi Municipal,Aflao JHS,Ketu South Circuit,Public,GH2026000342,Ama Boateng,24,340,Category C school outlook,Category C,demo_director
+manual-demo-06,2026-06-23 12:27:17 UTC,Akatsi Municipal,Penyi JHS,Ketu North Circuit,Public,GH2026000297,Yaa Mensah,28,320,Category C school outlook,Category C,demo_director
+manual-demo-07,2026-06-22 12:27:17 UTC,Akatsi Municipal,Dzorkpe JHS,Ketu South Circuit,Public,GH2026000378,Joseph Amissah,12,420,Category A school outlook,Category A,demo_director
+manual-demo-08,2026-06-21 12:27:17 UTC,Akatsi Municipal,Denu JHS,Ketu South Circuit,Public,GH2026000414,Kojo Dankwa,14,405,Category A school outlook,Category A,demo_director
+manual-demo-09,2026-06-20 12:27:17 UTC,Akatsi Municipal,Agorkpo JHS,Akatsi North Circuit,Public,GH2026000177,Esther Boateng,18,380,Category B school outlook,Category B,demo_director
+manual-demo-10,2026-06-19 12:27:17 UTC,Akatsi Municipal,Wuti JHS,Ketu North Circuit,Public,GH2026000328,Akosua Ofori,20,365,Category B school outlook,Category B,demo_director
+manual-demo-11,2026-06-18 12:27:17 UTC,Akatsi Municipal,Denu JHS,Ketu South Circuit,Public,GH2026000397,Yaw Owusu,24,340,Category C school outlook,Category C,demo_director
+manual-demo-12,2026-06-17 12:27:17 UTC,Akatsi Municipal,Kpetsu JHS,Akatsi North Circuit,Public,GH2026000138,Samuel Owusu,28,320,Category C school outlook,Category C,demo_director
+manual-demo-13,2026-06-16 12:27:17 UTC,Akatsi Municipal,Wuti JHS,Ketu North Circuit,Public,GH2026000311,David Nkrumah,12,420,Category A school outlook,Category A,demo_director
+manual-demo-14,2026-06-15 12:27:17 UTC,Akatsi Municipal,Wute D/A JHS,Akatsi South Circuit,Public,GH2026000094,Kofi Rawlings,14,405,Category A school outlook,Category A,demo_director
+manual-demo-15,2026-06-14 12:27:17 UTC,Akatsi Municipal,Kpeve JHS,Akatsi South Circuit,Public,GH2026000078,Grace Gyasi,18,380,Category B school outlook,Category B,demo_director
+manual-demo-16,2026-06-13 12:27:17 UTC,Akatsi Municipal,Dzorkpe JHS,Ketu South Circuit,Public,GH2026000387,Rebecca Dankwa,20,365,Category B school outlook,Category B,demo_director
+manual-demo-17,2026-06-12 12:27:17 UTC,Akatsi Municipal,Wute D/A JHS,Akatsi South Circuit,Public,GH2026000091,Kojo Ofori,24,340,Category C school outlook,Category C,demo_director
+manual-demo-18,2026-06-11 12:27:17 UTC,Akatsi Municipal,Penyi JHS,Ketu North Circuit,Public,GH2026000302,Akosua Osei,28,320,Category C school outlook,Category C,demo_director
