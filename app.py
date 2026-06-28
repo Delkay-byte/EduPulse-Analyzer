@@ -5551,6 +5551,20 @@ def build_briefing_pdf_bytes(scope_df, subject_cols, scope_label, school_sync_df
         ax.text(0.03, 0.94, title, fontsize=16, fontweight="bold", color="#0f172a", transform=ax.transAxes)
         ax.text(0.03, 0.89, insight, fontsize=10.5, color="#334155", style="italic", transform=ax.transAxes)
 
+    # Find the current school's actual ranking position
+    current_school_ranking = None
+    if not school_rankings.empty and "School_Name" in school_rankings.columns:
+        # Check if scope_label matches a school name in the rankings (case-insensitive, flexible matching)
+        scope_label_clean = str(scope_label).strip().lower()
+        school_rankings_clean = school_rankings.copy()
+        school_rankings_clean["School_Name_Clean"] = school_rankings_clean["School_Name"].str.strip().str.lower()
+        school_match = school_rankings_clean[school_rankings_clean["School_Name_Clean"].eq(scope_label_clean)]
+        if school_match.empty:
+            # Try partial matching if exact match fails
+            school_match = school_rankings_clean[school_rankings_clean["School_Name_Clean"].str.contains(scope_label_clean, na=False)]
+        if not school_match.empty:
+            current_school_ranking = school_match.iloc[0]
+
     with PdfPages(buffer) as pdf:
         fig, ax = plt.subplots(figsize=(11.69, 8.27))
         ax.axis("off")
@@ -5598,15 +5612,29 @@ def build_briefing_pdf_bytes(scope_df, subject_cols, scope_label, school_sync_df
             "Key takeaway: the district pulse combines student volume, aggregate quality, pass-rate movement, and raw-score competitiveness.",
         )
         summary_table = tables["summary_metrics"].copy()
-        top_school = school_rankings.iloc[0]["School_Name"] if not school_rankings.empty else "Awaiting data"
-        top_school_average = school_rankings.iloc[0]["Actual BECE Average"] if not school_rankings.empty else np.nan
-        extra_metrics = pd.DataFrame(
-            [
-                {"Metric": "Top Ranked School", "Value": top_school},
-                {"Metric": "Top School Actual BECE Average", "Value": round(float(top_school_average), 2) if pd.notna(top_school_average) else np.nan},
-                {"Metric": "Category A Tie-Break Rule", "Value": "Best 6 raw score used for edge-case competitiveness"},
-            ]
-        )
+        # Show the current school's ranking if available, otherwise show district top school
+        if current_school_ranking is not None:
+            top_school = current_school_ranking["School_Name"]
+            top_school_average = current_school_ranking["Actual BECE Average"]
+            top_school_position = int(current_school_ranking["Position"])
+            extra_metrics = pd.DataFrame(
+                [
+                    {"Metric": "Your School Ranking", "Value": f"{ordinal_rank(top_school_position)}"},
+                    {"Metric": "Your School BECE Average", "Value": round(float(top_school_average), 2) if pd.notna(top_school_average) else np.nan},
+                    {"Metric": "Category A Tie-Break Rule", "Value": "Best 6 raw score used for edge-case competitiveness"},
+                ]
+            )
+        else:
+            # Fallback to district top school if current school not in rankings
+            top_school = school_rankings.iloc[0]["School_Name"] if not school_rankings.empty else "Awaiting data"
+            top_school_average = school_rankings.iloc[0]["Actual BECE Average"] if not school_rankings.empty else np.nan
+            extra_metrics = pd.DataFrame(
+                [
+                    {"Metric": "Top Ranked School", "Value": top_school},
+                    {"Metric": "Top School Actual BECE Average", "Value": round(float(top_school_average), 2) if pd.notna(top_school_average) else np.nan},
+                    {"Metric": "Category A Tie-Break Rule", "Value": "Best 6 raw score used for edge-case competitiveness"},
+                ]
+            )
         summary_table = pd.concat([summary_table, extra_metrics], ignore_index=True)
         summary_render = ax.table(
             cellText=summary_table.values,
@@ -5630,17 +5658,44 @@ def build_briefing_pdf_bytes(scope_df, subject_cols, scope_label, school_sync_df
         )
         ranking_table = school_rankings.copy()
         if not ranking_table.empty:
-            ranking_table["Rank"] = ranking_table["Position"].apply(lambda value: ordinal_rank(int(value)))
-            ranking_table = ranking_table[["Rank", "School_Name", "Actual BECE Average"]]
-            render_table = ax.table(
-                cellText=ranking_table.values,
-                colLabels=["Position", "School", "Actual BECE Average"],
-                cellLoc="left",
-                bbox=[0.03, 0.12, 0.94, 0.72],
-            )
-            render_table.auto_set_font_size(False)
-            render_table.set_fontsize(9)
-            render_table.scale(1, 1.4)
+            # If this is a school-specific report, show only that school's ranking
+            if current_school_ranking is not None:
+                # Show only the current school's row with its actual position
+                scope_label_clean = str(scope_label).strip().lower()
+                ranking_table["School_Name_Clean"] = ranking_table["School_Name"].str.strip().str.lower()
+                school_specific_table = ranking_table[ranking_table["School_Name_Clean"].eq(scope_label_clean)].copy()
+                if school_specific_table.empty:
+                    # Try partial match
+                    school_specific_table = ranking_table[ranking_table["School_Name_Clean"].str.contains(scope_label_clean, na=False)].copy()
+                
+                if school_specific_table.empty:
+                    ax.text(0.03, 0.7, f"No ranking data available for {scope_label}.", fontsize=12, color="#475569", transform=ax.transAxes)
+                else:
+                    # Show the school with its actual rank position
+                    school_specific_table["Rank"] = school_specific_table["Position"].apply(lambda value: ordinal_rank(int(value)))
+                    school_specific_table = school_specific_table[["Rank", "School_Name", "Actual BECE Average"]]
+                    render_table = ax.table(
+                        cellText=school_specific_table.values,
+                        colLabels=["Position", "School", "Actual BECE Average"],
+                        cellLoc="left",
+                        bbox=[0.03, 0.12, 0.94, 0.72],
+                    )
+                    render_table.auto_set_font_size(False)
+                    render_table.set_fontsize(9)
+                    render_table.scale(1, 1.4)
+            else:
+                # District-wide report: show all schools
+                ranking_table["Rank"] = ranking_table["Position"].apply(lambda value: ordinal_rank(int(value)))
+                ranking_table = ranking_table[["Rank", "School_Name", "Actual BECE Average"]]
+                render_table = ax.table(
+                    cellText=ranking_table.values,
+                    colLabels=["Position", "School", "Actual BECE Average"],
+                    cellLoc="left",
+                    bbox=[0.03, 0.12, 0.94, 0.72],
+                )
+                render_table.auto_set_font_size(False)
+                render_table.set_fontsize(9)
+                render_table.scale(1, 1.4)
         else:
             ax.text(0.03, 0.7, "No school ranking data is available yet.", fontsize=12, color="#475569", transform=ax.transAxes)
         add_page_footer(ax)
